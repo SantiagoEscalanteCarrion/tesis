@@ -30,7 +30,7 @@ import albumentations as A
 # CONFIGURACIÓN
 # ─────────────────────────────────────────────
 
-BASE_DIR    = r"C:/Users/SANTIAGO/Desktop/TesisCodigo"
+BASE_DIR    = r"C:/Users/SANTIAGO/Documents/GitHub/tesis"
 INPUT_DIR   = os.path.join(BASE_DIR, "dataset")
 OUTPUT_DIR  = os.path.join(BASE_DIR, "dataset_augmented")
 TARGET      = 1000   # imágenes totales por clase (originales + augmentadas)
