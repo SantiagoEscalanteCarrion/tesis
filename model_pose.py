@@ -1,0 +1,517 @@
+"""
+Enfoque 2 — Pose Estimation + Features Clínicas + Clasificador ML
+==================================================================
+Pipeline:
+  1. MediaPipe Pose extrae 33 keypoints por imagen
+  2. Se calculan 12 features geométricas clínicamente relevantes
+     (asimetría de hombros, caderas, inclinación del tronco, etc.)
+  3. Se entrenan y comparan 3 clasificadores: RandomForest, XGBoost, SVM
+  4. SHAP values para explicar qué feature impulsa cada predicción
+
+Uso:
+    from model_pose import PoseClassifier
+    clf = PoseClassifier()
+    clf.extract_features(dataset_dir)
+    clf.train()
+    clf.evaluate()
+    clf.explain()
+"""
+
+import os
+import pickle
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import cv2
+import mediapipe as mp
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    roc_auc_score, roc_curve, ConfusionMatrixDisplay
+)
+import xgboost as xgb
+import shap
+
+from config import (
+    CLASSES, POSE_FEATURE_NAMES, NUM_POSE_FEATURES,
+    MP_LANDMARKS, OUTPUT_DIR, SEED, TEST_SPLIT, VAL_SPLIT
+)
+
+
+# ─────────────────────────────────────────────────────────────
+# EXTRACCIÓN DE FEATURES CON MEDIAPIPE
+# ─────────────────────────────────────────────────────────────
+
+def extract_pose_features_from_image(image_path, mp_pose_instance):
+    """
+    Extrae features geométricas clínicas de una imagen usando MediaPipe Pose.
+
+    Retorna: np.array de shape (NUM_POSE_FEATURES,) o None si falla detección.
+    """
+    img = cv2.imread(image_path)
+    if img is None:
+        return None
+
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = mp_pose_instance.process(img_rgb)
+
+    if not results.pose_landmarks:
+        return None
+
+    lm = results.pose_landmarks.landmark
+    idx = MP_LANDMARKS
+
+    # Extraer coordenadas normalizadas (0-1) de los 8 landmarks clave
+    ls = lm[idx["left_shoulder"]]
+    rs = lm[idx["right_shoulder"]]
+    le = lm[idx["left_elbow"]]
+    re = lm[idx["right_elbow"]]
+    lw = lm[idx["left_wrist"]]
+    rw = lm[idx["right_wrist"]]
+    lh = lm[idx["left_hip"]]
+    rh = lm[idx["right_hip"]]
+
+    # ── Features (todas normalizadas 0-1 por MediaPipe) ───────
+
+    # Diferencias de altura (y crece hacia abajo en imagen)
+    shoulder_height_diff = abs(ls.y - rs.y)
+    hip_height_diff      = abs(lh.y - rh.y)
+    elbow_height_diff    = abs(le.y - re.y)
+    wrist_height_diff    = abs(lw.y - rw.y)
+
+    # Anchos
+    shoulder_width = abs(ls.x - rs.x) + 1e-8   # evitar div/0
+    hip_width      = abs(lh.x - rh.x) + 1e-8
+
+    # Ratios de asimetría (independientes de la escala)
+    shoulder_asym_ratio = shoulder_height_diff / shoulder_width
+    hip_asym_ratio      = hip_height_diff / hip_width
+
+    # Línea media: midpoint de hombros y caderas
+    mid_shoulder_x = (ls.x + rs.x) / 2
+    mid_shoulder_y = (ls.y + rs.y) / 2
+    mid_hip_x      = (lh.x + rh.x) / 2
+    mid_hip_y      = (lh.y + rh.y) / 2
+
+    # Inclinación del tronco: desplazamiento horizontal midHip→midShoulder
+    trunk_tilt_x  = mid_shoulder_x - mid_hip_x
+
+    # Ángulo de inclinación del tronco (en grados)
+    dy = mid_shoulder_y - mid_hip_y + 1e-8
+    dx = trunk_tilt_x
+    trunk_tilt_angle = np.degrees(np.arctan2(abs(dx), abs(dy)))
+
+    # Desviación de la columna (proxy): diferencia x entre línea media
+    # de hombros y caderas (debería ser ~0 en columna recta)
+    spine_deviation = abs(trunk_tilt_x)
+
+    # Altura del cuerpo (proxy): distancia vertical shoulder → hip
+    body_height_proxy = abs(mid_shoulder_y - mid_hip_y)
+
+    features = np.array([
+        shoulder_height_diff,
+        hip_height_diff,
+        elbow_height_diff,
+        wrist_height_diff,
+        shoulder_width,
+        hip_width,
+        shoulder_asym_ratio,
+        hip_asym_ratio,
+        trunk_tilt_x,
+        trunk_tilt_angle,
+        spine_deviation,
+        body_height_proxy,
+    ], dtype=np.float32)
+
+    return features
+
+
+def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
+    """
+    Recorre las subcarpetas del dataset y extrae features de pose para
+    todas las imágenes.
+
+    Args:
+        dataset_dir: Carpeta raíz con subcarpetas por clase.
+        save_path:   Si se indica, guarda el resultado en .pkl.
+
+    Returns:
+        X: np.array (N, NUM_POSE_FEATURES)
+        y: np.array (N,)  — 0=no, 1=yes
+        paths: lista de rutas de imagen (para trazabilidad)
+        skipped: número de imágenes donde MediaPipe no detectó pose
+    """
+    mp_pose = mp.solutions.pose.Pose(
+        static_image_mode=True,
+        model_complexity=2,          # más preciso (más lento)
+        min_detection_confidence=0.5
+    )
+
+    X, y, paths = [], [], []
+    skipped = 0
+
+    for class_idx, class_name in enumerate(CLASSES):
+        class_dir = os.path.join(dataset_dir, class_name)
+        if not os.path.isdir(class_dir):
+            print(f"[ADVERTENCIA] No existe: {class_dir}")
+            continue
+
+        img_files = [f for f in os.listdir(class_dir)
+                     if f.lower().endswith(".jpg")]
+
+        if verbose:
+            print(f"\nExtrayendo features: {class_name} ({len(img_files)} imgs)")
+
+        for fname in img_files:
+            img_path = os.path.join(class_dir, fname)
+            feats = extract_pose_features_from_image(img_path, mp_pose)
+
+            if feats is None:
+                skipped += 1
+                continue
+
+            X.append(feats)
+            y.append(class_idx)   # 0=scoliosis_no, 1=scoliosis_yes
+            paths.append(img_path)
+
+    mp_pose.close()
+
+    X = np.array(X, dtype=np.float32)
+    y = np.array(y, dtype=np.int32)
+
+    if verbose:
+        print(f"\nTotal extraídas: {len(X)} | Saltadas (sin pose): {skipped}")
+        print(f"Distribución: {dict(zip(*np.unique(y, return_counts=True)))}")
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "wb") as f:
+            pickle.dump({"X": X, "y": y, "paths": paths}, f)
+        print(f"Features guardadas en: {save_path}")
+
+    return X, y, paths, skipped
+
+
+# ─────────────────────────────────────────────────────────────
+# PREPARACIÓN DE DATOS
+# ─────────────────────────────────────────────────────────────
+
+def split_data(X, y, test_split=TEST_SPLIT, val_split=VAL_SPLIT, seed=SEED):
+    """Split estratificado: train / val / test."""
+    from sklearn.model_selection import train_test_split
+
+    # Separar test primero
+    X_trainval, X_test, y_trainval, y_test = train_test_split(
+        X, y, test_size=test_split, stratify=y, random_state=seed
+    )
+    # Separar val del resto
+    val_fraction = val_split / (1 - test_split)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_trainval, y_trainval,
+        test_size=val_fraction, stratify=y_trainval, random_state=seed
+    )
+
+    print(f"Split — Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+# ─────────────────────────────────────────────────────────────
+# DEFINICIÓN Y ENTRENAMIENTO DE CLASIFICADORES
+# ─────────────────────────────────────────────────────────────
+
+def build_classifiers(seed=SEED):
+    """
+    Retorna un dict con los 3 clasificadores a comparar,
+    cada uno envuelto en un Pipeline con StandardScaler.
+    """
+    return {
+        "RandomForest": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", RandomForestClassifier(
+                n_estimators=300,
+                max_depth=None,
+                min_samples_leaf=2,
+                class_weight="balanced",
+                random_state=seed,
+                n_jobs=-1,
+            ))
+        ]),
+        "XGBoost": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", xgb.XGBClassifier(
+                n_estimators=300,
+                max_depth=6,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                use_label_encoder=False,
+                eval_metric="logloss",
+                random_state=seed,
+                n_jobs=-1,
+            ))
+        ]),
+        "SVM": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", SVC(
+                kernel="rbf",
+                C=10,
+                probability=True,
+                class_weight="balanced",
+                random_state=seed,
+            ))
+        ]),
+    }
+
+
+def train_pose_classifiers(X_train, y_train, X_val, y_val,
+                            output_dir=None, seed=SEED):
+    """
+    Entrena los 3 clasificadores, evalúa en validación con CV,
+    y retorna el mejor modelo junto con las métricas.
+
+    Returns:
+        best_name: nombre del mejor clasificador
+        best_model: pipeline entrenado
+        all_models: dict con todos los pipelines entrenados
+        cv_results: dict con scores de CV
+    """
+    if output_dir is None:
+        output_dir = os.path.join(OUTPUT_DIR, "pose")
+    os.makedirs(output_dir, exist_ok=True)
+
+    classifiers = build_classifiers(seed)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+
+    cv_results = {}
+    for name, pipe in classifiers.items():
+        scores = cross_val_score(pipe, X_train, y_train,
+                                 cv=cv, scoring="roc_auc", n_jobs=-1)
+        cv_results[name] = scores
+        print(f"  {name:15s} CV AUC: {scores.mean():.4f} ± {scores.std():.4f}")
+        pipe.fit(X_train, y_train)
+
+    # Elegir el mejor según AUC en validación
+    best_name = max(cv_results, key=lambda k: cv_results[k].mean())
+    best_model = classifiers[best_name]
+
+    print(f"\nMejor clasificador: {best_name}")
+
+    # Guardar todos los modelos
+    for name, pipe in classifiers.items():
+        model_path = os.path.join(output_dir, f"pose_{name.lower()}.pkl")
+        with open(model_path, "wb") as f:
+            pickle.dump(pipe, f)
+    print(f"Modelos guardados en: {output_dir}")
+
+    # Graficar comparativa CV
+    _plot_cv_comparison(cv_results, output_dir)
+
+    return best_name, best_model, classifiers, cv_results
+
+
+# ─────────────────────────────────────────────────────────────
+# EVALUACIÓN
+# ─────────────────────────────────────────────────────────────
+
+def evaluate_pose_classifiers(classifiers, X_test, y_test, output_dir=None):
+    """
+    Evalúa todos los clasificadores en test y genera gráficas comparativas.
+
+    Returns:
+        results: dict {model_name: {accuracy, auc, report, ...}}
+    """
+    if output_dir is None:
+        output_dir = os.path.join(OUTPUT_DIR, "pose")
+    os.makedirs(output_dir, exist_ok=True)
+
+    results = {}
+    plt.figure(figsize=(8, 6))
+
+    for name, pipe in classifiers.items():
+        y_prob = pipe.predict_proba(X_test)[:, 1]
+        y_pred = pipe.predict(X_test)
+        auc = roc_auc_score(y_test, y_prob)
+        acc = np.mean(y_test == y_pred)
+
+        results[name] = {"accuracy": acc, "auc": auc,
+                         "y_prob": y_prob, "y_pred": y_pred}
+
+        print(f"\n{'─'*45}")
+        print(f"  {name}")
+        print(f"{'─'*45}")
+        print(classification_report(y_test, y_pred,
+                                    target_names=["scoliosis_no", "scoliosis_yes"]))
+        print(f"AUC-ROC: {auc:.4f}")
+
+        fpr, tpr, _ = roc_curve(y_test, y_prob)
+        plt.plot(fpr, tpr, lw=2, label=f"{name} (AUC={auc:.3f})")
+
+    plt.plot([0, 1], [0, 1], "k--", lw=1)
+    plt.xlabel("FPR"); plt.ylabel("TPR")
+    plt.title("Curvas ROC — Clasificadores de Pose")
+    plt.legend(); plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "pose_roc_comparison.png"), dpi=150)
+    plt.show()
+
+    # Confusion matrix del mejor (mayor AUC)
+    best = max(results, key=lambda k: results[k]["auc"])
+    _plot_confusion_matrix_pose(y_test, results[best]["y_pred"],
+                                output_dir, model_name=best)
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────
+# EXPLICABILIDAD — SHAP VALUES
+# ─────────────────────────────────────────────────────────────
+
+def explain_with_shap(pipeline, X_test, feature_names=None, output_dir=None):
+    """
+    Calcula e imprime SHAP values para el clasificador ML.
+    Genera: beeswarm plot y bar plot de importancia media.
+
+    Nota: Para RandomForest y XGBoost usa TreeExplainer (rápido).
+          Para SVM usa KernelExplainer (lento, usa muestra pequeña).
+    """
+    if output_dir is None:
+        output_dir = os.path.join(OUTPUT_DIR, "pose")
+    os.makedirs(output_dir, exist_ok=True)
+
+    if feature_names is None:
+        feature_names = POSE_FEATURE_NAMES
+
+    clf = pipeline.named_steps["clf"]
+    scaler = pipeline.named_steps["scaler"]
+    X_scaled = scaler.transform(X_test)
+
+    clf_type = type(clf).__name__
+
+    if clf_type in ("RandomForestClassifier", "XGBClassifier"):
+        explainer = shap.TreeExplainer(clf)
+        shap_values = explainer.shap_values(X_scaled)
+        # RandomForest devuelve lista [clase0, clase1]; XGBoost devuelve array
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1]   # clase scoliosis_yes
+    else:
+        # SVM: usar un subconjunto pequeño para KernelExplainer
+        background = shap.sample(X_scaled, min(100, len(X_scaled)))
+        explainer = shap.KernelExplainer(
+            lambda x: pipeline.predict_proba(
+                scaler.inverse_transform(x)
+            )[:, 1],
+            background
+        )
+        shap_values = explainer.shap_values(X_scaled[:50])
+        X_scaled = X_scaled[:50]
+
+    # Beeswarm
+    plt.figure()
+    shap.summary_plot(shap_values, X_scaled,
+                      feature_names=feature_names, show=False)
+    plt.title(f"SHAP Beeswarm — {clf_type}")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"shap_beeswarm_{clf_type}.png"), dpi=150)
+    plt.show()
+
+    # Bar plot (media absoluta)
+    plt.figure()
+    shap.summary_plot(shap_values, X_scaled,
+                      feature_names=feature_names,
+                      plot_type="bar", show=False)
+    plt.title(f"SHAP Importancia media — {clf_type}")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"shap_bar_{clf_type}.png"), dpi=150)
+    plt.show()
+
+    mean_abs = np.abs(shap_values).mean(axis=0)
+    importance_df = pd.DataFrame({
+        "feature": feature_names,
+        "mean_abs_shap": mean_abs
+    }).sort_values("mean_abs_shap", ascending=False)
+
+    print("\nImportancia de features (SHAP):")
+    print(importance_df.to_string(index=False))
+    importance_df.to_csv(
+        os.path.join(output_dir, f"shap_importance_{clf_type}.csv"), index=False
+    )
+    return importance_df
+
+
+# ─────────────────────────────────────────────────────────────
+# GRÁFICAS AUXILIARES
+# ─────────────────────────────────────────────────────────────
+
+def _plot_cv_comparison(cv_results, output_dir):
+    names  = list(cv_results.keys())
+    means  = [cv_results[n].mean() for n in names]
+    stds   = [cv_results[n].std()  for n in names]
+
+    plt.figure(figsize=(8, 5))
+    bars = plt.bar(names, means, yerr=stds, capsize=6,
+                   color=["#4C72B0", "#DD8452", "#55A868"], alpha=0.85)
+    for bar, mean in zip(bars, means):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                 f"{mean:.3f}", ha="center", va="bottom", fontsize=11)
+    plt.ylim(0.5, 1.05)
+    plt.ylabel("AUC-ROC (CV 5-fold)"); plt.title("Comparativa de clasificadores — Pose")
+    plt.grid(True, axis="y", alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "pose_cv_comparison.png"), dpi=150)
+    plt.show()
+
+
+def _plot_confusion_matrix_pose(y_true, y_pred, output_dir, model_name=""):
+    cm = confusion_matrix(y_true, y_pred)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Greens",
+                xticklabels=["no", "yes"],
+                yticklabels=["no", "yes"], ax=ax)
+    ax.set_xlabel("Predicción"); ax.set_ylabel("Real")
+    ax.set_title(f"Matriz de Confusión — {model_name} (Pose)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir,
+                f"pose_{model_name.lower()}_confusion.png"), dpi=150)
+    plt.show()
+
+
+# ─────────────────────────────────────────────────────────────
+# PUNTO DE ENTRADA DIRECTO
+# ─────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    from config import DATASET_AUG_DIR
+
+    out = os.path.join(OUTPUT_DIR, "pose")
+    features_path = os.path.join(out, "pose_features.pkl")
+
+    # 1. Extraer o cargar features
+    if os.path.exists(features_path):
+        print(f"Cargando features desde: {features_path}")
+        with open(features_path, "rb") as f:
+            data = pickle.load(f)
+        X, y = data["X"], data["y"]
+    else:
+        X, y, _, _ = extract_features_from_dataset(
+            DATASET_AUG_DIR, save_path=features_path
+        )
+
+    # 2. Split
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y)
+
+    # 3. Entrenar
+    best_name, best_model, all_models, cv_res = train_pose_classifiers(
+        X_train, y_train, X_val, y_val, output_dir=out
+    )
+
+    # 4. Evaluar
+    results = evaluate_pose_classifiers(all_models, X_test, y_test, output_dir=out)
+
+    # 5. SHAP
+    explain_with_shap(best_model, X_test, output_dir=out)
