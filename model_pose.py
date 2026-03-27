@@ -19,6 +19,7 @@ Uso:
 
 import os
 import pickle
+import urllib.request
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -45,12 +46,54 @@ from config import (
 
 
 # ─────────────────────────────────────────────────────────────
+# INICIALIZACIÓN DE MEDIAPIPE (nueva API Tasks, ≥0.10.14)
+# ─────────────────────────────────────────────────────────────
+
+_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "pose_landmarker/pose_landmarker_full/float16/latest/"
+    "pose_landmarker_full.task"
+)
+_MODEL_LOCAL = "pose_landmarker_full.task"
+
+
+def _get_landmarker():
+    """
+    Descarga el modelo la primera vez y crea un PoseLandmarker.
+    Retorna el landmarker listo para usar (modo IMAGE estático).
+    """
+    if not os.path.exists(_MODEL_LOCAL):
+        print(f"Descargando modelo MediaPipe Pose (~10 MB)...")
+        urllib.request.urlretrieve(_MODEL_URL, _MODEL_LOCAL)
+        print("  Descarga completada.")
+
+    BaseOptions         = mp.tasks.BaseOptions
+    PoseLandmarker      = mp.tasks.vision.PoseLandmarker
+    PoseLandmarkerOpts  = mp.tasks.vision.PoseLandmarkerOptions
+    RunningMode         = mp.tasks.vision.RunningMode
+
+    options = PoseLandmarkerOpts(
+        base_options=BaseOptions(model_asset_path=_MODEL_LOCAL),
+        running_mode=RunningMode.IMAGE,
+        num_poses=1,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_score=0.5,
+        min_tracking_confidence=0.5,
+    )
+    return PoseLandmarker.create_from_options(options)
+
+
+# ─────────────────────────────────────────────────────────────
 # EXTRACCIÓN DE FEATURES CON MEDIAPIPE
 # ─────────────────────────────────────────────────────────────
 
-def extract_pose_features_from_image(image_path, mp_pose_instance):
+def extract_pose_features_from_image(image_path, landmarker):
     """
     Extrae features geométricas clínicas de una imagen usando MediaPipe Pose.
+
+    Args:
+        image_path: ruta a la imagen JPG.
+        landmarker: instancia de mp.tasks.vision.PoseLandmarker.
 
     Retorna: np.array de shape (NUM_POSE_FEATURES,) o None si falla detección.
     """
@@ -59,12 +102,13 @@ def extract_pose_features_from_image(image_path, mp_pose_instance):
         return None
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = mp_pose_instance.process(img_rgb)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+    result = landmarker.detect(mp_image)
 
-    if not results.pose_landmarks:
+    if not result.pose_landmarks or len(result.pose_landmarks) == 0:
         return None
 
-    lm = results.pose_landmarks.landmark
+    lm  = result.pose_landmarks[0]   # landmarks de la primera persona detectada
     idx = MP_LANDMARKS
 
     # Extraer coordenadas normalizadas (0-1) de los 8 landmarks clave
@@ -147,11 +191,7 @@ def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
         paths: lista de rutas de imagen (para trazabilidad)
         skipped: número de imágenes donde MediaPipe no detectó pose
     """
-    mp_pose = mp.solutions.pose.Pose(
-        static_image_mode=True,
-        model_complexity=2,          # más preciso (más lento)
-        min_detection_confidence=0.5
-    )
+    landmarker = _get_landmarker()
 
     X, y, paths = [], [], []
     skipped = 0
@@ -170,7 +210,7 @@ def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
 
         for fname in img_files:
             img_path = os.path.join(class_dir, fname)
-            feats = extract_pose_features_from_image(img_path, mp_pose)
+            feats = extract_pose_features_from_image(img_path, landmarker)
 
             if feats is None:
                 skipped += 1
@@ -180,7 +220,7 @@ def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
             y.append(class_idx)   # 0=scoliosis_no, 1=scoliosis_yes
             paths.append(img_path)
 
-    mp_pose.close()
+    landmarker.close()
 
     X = np.array(X, dtype=np.float32)
     y = np.array(y, dtype=np.int32)
