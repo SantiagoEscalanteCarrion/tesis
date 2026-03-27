@@ -77,8 +77,6 @@ def _get_landmarker():
         running_mode=RunningMode.IMAGE,
         num_poses=1,
         min_pose_detection_confidence=0.5,
-        min_pose_presence_score=0.5,
-        min_tracking_confidence=0.5,
     )
     return PoseLandmarker.create_from_options(options)
 
