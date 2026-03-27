@@ -34,6 +34,7 @@ from config import (
     IMG_SIZE, BATCH_SIZE, EPOCHS_HEAD, EPOCHS_FINE,
     LEARNING_RATE_HEAD, LEARNING_RATE_FINE, OUTPUT_DIR, SEED
 )
+from data_utils import grouped_split
 
 
 # ─────────────────────────────────────────────────────────────
@@ -42,58 +43,46 @@ from config import (
 
 def build_datasets(dataset_dir, val_split=0.15, test_split=0.15, seed=SEED):
     """
-    Carga imágenes desde dataset_dir con estructura:
-        dataset_dir/
-            scoliosis_no/
-            scoliosis_yes/
+    Carga imágenes con split sin data leakage.
+
+    Split por imagen ORIGINAL:
+      - Train: orig del grupo train + sus aug_*
+      - Val:   solo orig del grupo val
+      - Test:  solo orig del grupo test
 
     Retorna: (train_ds, val_ds, test_ds)
     """
-    # Separamos test primero para que nunca "contamine" entrenamiento
-    full_ds = tf.keras.utils.image_dataset_from_directory(
-        dataset_dir,
-        image_size=IMG_SIZE,
-        batch_size=None,          # sin batch para poder hacer split manual
-        shuffle=True,
-        seed=seed,
-        label_mode="binary",
-    )
+    print("Construyendo splits sin data leakage...")
+    splits = grouped_split(dataset_dir, test_split=test_split,
+                           val_split=val_split, seed=seed)
 
-    total = tf.data.experimental.cardinality(full_ds).numpy()
-    test_size = int(total * test_split)
-    val_size  = int(total * val_split)
-    train_size = total - test_size - val_size
-
-    train_ds = full_ds.take(train_size)
-    remaining = full_ds.skip(train_size)
-    val_ds   = remaining.take(val_size)
-    test_ds  = remaining.skip(val_size)
-
-    # Preprocesamiento y batching
     AUTOTUNE = tf.data.AUTOTUNE
 
-    def preprocess(img, label):
-        img = tf.cast(img, tf.float32)
-        img = tf.keras.applications.efficientnet.preprocess_input(img)
-        return img, label
+    def _make_ds(pairs, shuffle=False):
+        paths  = [p for p, _ in pairs]
+        labels = [float(l) for _, l in pairs]
 
-    train_ds = (train_ds
-                .map(preprocess, num_parallel_calls=AUTOTUNE)
-                .cache()
-                .shuffle(1000, seed=seed)
-                .batch(BATCH_SIZE)
-                .prefetch(AUTOTUNE))
+        def load(path, label):
+            img = tf.io.read_file(path)
+            img = tf.image.decode_jpeg(img, channels=3)
+            img = tf.image.resize(img, IMG_SIZE)
+            img = tf.cast(img, tf.float32)
+            img = tf.keras.applications.efficientnet.preprocess_input(img)
+            return img, label
 
-    val_ds = (val_ds
-              .map(preprocess, num_parallel_calls=AUTOTUNE)
-              .cache()
-              .batch(BATCH_SIZE)
-              .prefetch(AUTOTUNE))
+        ds = tf.data.Dataset.from_tensor_slices((paths, labels))
+        ds = ds.map(load, num_parallel_calls=AUTOTUNE)
+        if shuffle:
+            ds = ds.shuffle(1000, seed=seed)
+        return ds.batch(BATCH_SIZE).prefetch(AUTOTUNE)
 
-    test_ds = (test_ds
-               .map(preprocess, num_parallel_calls=AUTOTUNE)
-               .batch(BATCH_SIZE)
-               .prefetch(AUTOTUNE))
+    train_ds = _make_ds(splits["train"], shuffle=True)
+    val_ds   = _make_ds(splits["val"])
+    test_ds  = _make_ds(splits["test"])
+
+    print(f"  train={len(splits['train'])} imgs | "
+          f"val={len(splits['val'])} imgs | "
+          f"test={len(splits['test'])} imgs")
 
     return train_ds, val_ds, test_ds
 

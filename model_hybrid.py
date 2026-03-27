@@ -71,26 +71,29 @@ def build_hybrid_dataset(dataset_dir, pose_features_path,
     pose_y     = pose_data["y"].astype(np.float32)     # (N,)
     pose_paths = pose_data["paths"]                    # lista de str
 
-    # Normalizar features de pose
-    mean = pose_X.mean(axis=0)
-    std  = pose_X.std(axis=0) + 1e-8
+    # ── Split sin data leakage usando grouped_split() ─────────
+    from data_utils import grouped_split
+
+    print("Construyendo splits sin data leakage...")
+    splits = grouped_split(dataset_dir, test_split=test_split,
+                           val_split=val_split, seed=seed)
+
+    # Mapeo path → índice en el pkl de pose para lookup rápido
+    path_to_idx = {p: i for i, p in enumerate(pose_paths)}
+
+    def _resolve(split_pairs):
+        """Retorna índices en pose_X que pertenecen a este split."""
+        return [path_to_idx[p] for p, _ in split_pairs if p in path_to_idx]
+
+    idx_train = _resolve(splits["train"])
+    idx_val   = _resolve(splits["val"])
+    idx_test  = _resolve(splits["test"])
+
+    # Normalizar features de pose con estadísticas del train únicamente
+    mean = pose_X[idx_train].mean(axis=0)
+    std  = pose_X[idx_train].std(axis=0) + 1e-8
     pose_X_norm = (pose_X - mean) / std
-
-    # Guardar estadísticas para inferencia futura
     norm_stats = {"mean": mean, "std": std}
-
-    # Split estratificado
-    from sklearn.model_selection import train_test_split
-
-    indices = np.arange(len(pose_y))
-    idx_trainval, idx_test = train_test_split(
-        indices, test_size=test_split, stratify=pose_y, random_state=seed
-    )
-    val_fraction = val_split / (1 - test_split)
-    idx_train, idx_val = train_test_split(
-        idx_trainval, test_size=val_fraction,
-        stratify=pose_y[idx_trainval], random_state=seed
-    )
 
     def make_ds(idx, shuffle=False):
         """Crea tf.data.Dataset para un subconjunto de índices."""
