@@ -67,15 +67,17 @@ def train_pose_model(dataset_dir, output_dir):
         print(f"  Cargando features de pose existentes: {features_path}")
         with open(features_path, "rb") as f:
             data = pickle.load(f)
-        X, y = data["X"], data["y"]
+        X, y, paths = data["X"], data["y"], data["paths"]
     else:
         print("  Extrayendo features de pose (puede tardar varios minutos)...")
-        X, y, _, skipped = extract_features_from_dataset(
+        X, y, paths, skipped = extract_features_from_dataset(
             dataset_dir, save_path=features_path
         )
         print(f"  Imágenes saltadas (sin pose detectada): {skipped}")
 
-    X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y)
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(
+        X, y, paths, dataset_dir
+    )
 
     best_name, best_model, all_models, cv_res = train_pose_classifiers(
         X_train, y_train, X_val, y_val, output_dir=out

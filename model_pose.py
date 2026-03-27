@@ -240,20 +240,42 @@ def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
 # PREPARACIÓN DE DATOS
 # ─────────────────────────────────────────────────────────────
 
-def split_data(X, y, test_split=TEST_SPLIT, val_split=VAL_SPLIT, seed=SEED):
-    """Split estratificado: train / val / test."""
-    from sklearn.model_selection import train_test_split
+def split_data(X, y, paths, dataset_dir,
+               test_split=TEST_SPLIT, val_split=VAL_SPLIT, seed=SEED):
+    """
+    Split sin data leakage usando grouped_split().
 
-    # Separar test primero
-    X_trainval, X_test, y_trainval, y_test = train_test_split(
-        X, y, test_size=test_split, stratify=y, random_state=seed
-    )
-    # Separar val del resto
-    val_fraction = val_split / (1 - test_split)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_trainval, y_trainval,
-        test_size=val_fraction, stratify=y_trainval, random_state=seed
-    )
+    Filtra X/y según qué paths pertenecen a cada split,
+    garantizando que ningún aug_* de test/val contamine el train.
+
+    Args:
+        X:           features extraídas (N, NUM_POSE_FEATURES)
+        y:           etiquetas (N,)
+        paths:       lista de rutas absolutas de cada imagen (N,)
+        dataset_dir: carpeta raíz del dataset augmentado
+
+    Returns:
+        X_train, X_val, X_test, y_train, y_val, y_test
+    """
+    from data_utils import grouped_split
+
+    print("Construyendo splits sin data leakage...")
+    splits = grouped_split(dataset_dir, test_split=test_split,
+                           val_split=val_split, seed=seed)
+
+    # Construir sets de paths por split para lookup O(1)
+    train_paths = {p for p, _ in splits["train"]}
+    val_paths   = {p for p, _ in splits["val"]}
+    test_paths  = {p for p, _ in splits["test"]}
+
+    # Filtrar X/y por split
+    def _filter(path_set):
+        idx = [i for i, p in enumerate(paths) if p in path_set]
+        return X[idx], y[idx]
+
+    X_train, y_train = _filter(train_paths)
+    X_val,   y_val   = _filter(val_paths)
+    X_test,  y_test  = _filter(test_paths)
 
     print(f"Split — Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
     return X_train, X_val, X_test, y_train, y_val, y_test
@@ -534,14 +556,16 @@ if __name__ == "__main__":
         print(f"Cargando features desde: {features_path}")
         with open(features_path, "rb") as f:
             data = pickle.load(f)
-        X, y = data["X"], data["y"]
+        X, y, paths = data["X"], data["y"], data["paths"]
     else:
-        X, y, _, _ = extract_features_from_dataset(
+        X, y, paths, _ = extract_features_from_dataset(
             DATASET_AUG_DIR, save_path=features_path
         )
 
-    # 2. Split
-    X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y)
+    # 2. Split sin data leakage
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(
+        X, y, paths, DATASET_AUG_DIR
+    )
 
     # 3. Entrenar
     best_name, best_model, all_models, cv_res = train_pose_classifiers(
