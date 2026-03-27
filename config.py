@@ -10,7 +10,7 @@ import os
 # ─────────────────────────────────────────────
 
 # Ruta raíz del proyecto en tu máquina Windows
-BASE_DIR = r"C:/Users/SANTIAGO/Desktop/TesisCodigo"
+BASE_DIR = r"C:/Users/SANTIAGO/Documents/GitHub/tesis"
 
 # Dataset original (pre-augmentation)
 DATASET_DIR = os.path.join(BASE_DIR, "dataset")

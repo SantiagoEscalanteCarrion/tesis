@@ -1,24 +1,3 @@
-"""
-Data Augmentation para dataset de detección de escoliosis.
-Genera imágenes aumentadas de forma conservadora para no alterar
-características anatómicas relevantes.
-
-Estructura esperada:
-    TesisCodigo/
-    └── dataset/
-        ├── scoliosis_yes/   (120 imágenes JPG)
-        └── scoliosis_no/    (203 imágenes JPG)
-
-Salida:
-    TesisCodigo/
-    └── dataset_augmented/
-        ├── scoliosis_yes/   (~1000 imágenes JPG)
-        └── scoliosis_no/    (~1000 imágenes JPG)
-
-Dependencias:
-    pip install albumentations pillow numpy tqdm
-"""
-
 import os
 import random
 import numpy as np
