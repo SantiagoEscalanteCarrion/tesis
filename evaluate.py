@@ -76,15 +76,11 @@ def predict_single_image_pose(pipeline, image_path, norm_stats=None, threshold=0
     Predice la clase de una imagen con el clasificador de pose.
     Retorna: (label, confidence)
     """
-    import mediapipe as mp
-    from model_pose import extract_pose_features_from_image
+    from model_pose import extract_pose_features_from_image, _get_landmarker
 
-    mp_pose = mp.solutions.pose.Pose(
-        static_image_mode=True, model_complexity=2,
-        min_detection_confidence=0.5
-    )
-    feats = extract_pose_features_from_image(image_path, mp_pose)
-    mp_pose.close()
+    landmarker = _get_landmarker()
+    feats = extract_pose_features_from_image(image_path, landmarker)
+    landmarker.close()
 
     if feats is None:
         return "ERROR: no se detectó pose en la imagen", 0.0
@@ -105,8 +101,7 @@ def predict_single_image_hybrid(model, image_path, pose_pipeline,
     Requiere tanto el modelo Keras como el pipeline de pose (para features).
     Retorna: (label, confidence)
     """
-    import mediapipe as mp
-    from model_pose import extract_pose_features_from_image
+    from model_pose import extract_pose_features_from_image, _get_landmarker
 
     # Imagen
     img = tf.keras.preprocessing.image.load_img(image_path, target_size=IMG_SIZE)
@@ -115,12 +110,9 @@ def predict_single_image_hybrid(model, image_path, pose_pipeline,
     img_array = np.expand_dims(img_array, axis=0)
 
     # Pose features
-    mp_pose = mp.solutions.pose.Pose(
-        static_image_mode=True, model_complexity=2,
-        min_detection_confidence=0.5
-    )
-    feats = extract_pose_features_from_image(image_path, mp_pose)
-    mp_pose.close()
+    landmarker = _get_landmarker()
+    feats = extract_pose_features_from_image(image_path, landmarker)
+    landmarker.close()
 
     if feats is None:
         return "ERROR: no se detectó pose en la imagen", 0.0
