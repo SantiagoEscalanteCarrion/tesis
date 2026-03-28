@@ -21,6 +21,14 @@ from sklearn.model_selection import train_test_split
 from config import CLASSES, TEST_SPLIT, VAL_SPLIT, SEED
 
 
+def _norm(path):
+    """
+    Normaliza un path para comparación segura en Windows y Linux.
+    Resuelve el problema de separadores mixtos (/ vs \\).
+    """
+    return os.path.normcase(os.path.normpath(path))
+
+
 def grouped_split(dataset_dir,
                   test_split=TEST_SPLIT,
                   val_split=VAL_SPLIT,
@@ -37,8 +45,10 @@ def grouped_split(dataset_dir,
 
     Returns:
         dict con claves "train", "val", "test".
-        Cada valor es una lista de tuplas (ruta_absoluta, label_int).
+        Cada valor es una lista de tuplas (ruta_normalizada, label_int).
         label_int: 0 = scoliosis_no, 1 = scoliosis_yes.
+        Todas las rutas están normalizadas con _norm() para comparación
+        segura en Windows.
 
     Ejemplo:
         splits = grouped_split(dataset_dir)
@@ -66,14 +76,12 @@ def grouped_split(dataset_dir,
 
         # ── Split estratificado sobre los originales ──────────
         indices = list(range(n_orig))
-        # Separar test primero
         idx_trainval, idx_test = train_test_split(
             indices,
             test_size=test_split,
             random_state=seed,
             shuffle=True,
         )
-        # Separar val del resto
         val_fraction = val_split / (1 - test_split)
         idx_train, idx_val = train_test_split(
             idx_trainval,
@@ -86,9 +94,9 @@ def grouped_split(dataset_dir,
         val_set   = set(idx_val)
         test_set  = set(idx_test)
 
-        # ── Asignar orig_* a su split ─────────────────────────
+        # ── Asignar orig_* a su split (rutas normalizadas) ────
         for i, fname in enumerate(orig_files):
-            path = os.path.join(class_dir, fname)
+            path = _norm(os.path.join(class_dir, fname))
             if i in train_set:
                 all_splits["train"].append((path, label_idx))
             elif i in val_set:
@@ -104,9 +112,9 @@ def grouped_split(dataset_dir,
             aug_idx = int(m.group(1))
             source_orig_idx = aug_idx % n_orig
             if source_orig_idx in train_set:
-                path = os.path.join(class_dir, fname)
+                path = _norm(os.path.join(class_dir, fname))
                 all_splits["train"].append((path, label_idx))
-            # Si el original fuente está en val o test, descartamos el aug
+            # Si el original fuente está en val o test, se descarta el aug
 
         _print_split_summary(class_name, idx_train, idx_val, idx_test,
                               aug_files, n_orig, train_set)
