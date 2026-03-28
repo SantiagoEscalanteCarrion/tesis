@@ -175,20 +175,89 @@ def extract_pose_features_from_image(image_path, landmarker):
     return features
 
 
-def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
+def _extract_for_pairs(split_pairs, landmarker, split_name="", verbose=True):
     """
-    Recorre las subcarpetas del dataset y extrae features de pose para
-    todas las imágenes.
+    Extrae features de pose para una lista de (path, label) pares.
+    Retorna (X, y, skipped).
+    """
+    X, y = [], []
+    skipped = 0
+    if verbose:
+        print(f"  Extrayendo {split_name}: {len(split_pairs)} imágenes...")
+
+    for img_path, label in split_pairs:
+        feats = extract_pose_features_from_image(str(img_path), landmarker)
+        if feats is None:
+            skipped += 1
+            continue
+        X.append(feats)
+        y.append(label)
+
+    return np.array(X, dtype=np.float32), np.array(y, dtype=np.int32), skipped
+
+
+def extract_and_split_features(dataset_dir, save_dir=None,
+                                test_split=TEST_SPLIT, val_split=VAL_SPLIT,
+                                seed=SEED, verbose=True):
+    """
+    Extrae features de pose con split sin data leakage.
+
+    Flujo:
+      1. grouped_split() determina qué imágenes van a train/val/test
+      2. MediaPipe extrae features SOLO para los paths de cada split
+      → No hay comparación de paths, no hay riesgo de leakage por paths
 
     Args:
-        dataset_dir: Carpeta raíz con subcarpetas por clase.
-        save_path:   Si se indica, guarda el resultado en .pkl.
+        dataset_dir: Carpeta raíz del dataset augmentado.
+        save_dir:    Si se indica, guarda los resultados en split_features.pkl.
+        test_split, val_split, seed: Parámetros de split.
+        verbose:     Imprimir progreso.
 
     Returns:
-        X: np.array (N, NUM_POSE_FEATURES)
-        y: np.array (N,)  — 0=no, 1=yes
-        paths: lista de rutas de imagen (para trazabilidad)
-        skipped: número de imágenes donde MediaPipe no detectó pose
+        dict con claves "train", "val", "test".
+        Cada valor es {"X": np.array, "y": np.array}.
+    """
+    from data_utils import grouped_split
+
+    print("Construyendo splits sin data leakage...")
+    splits_paths = grouped_split(dataset_dir, test_split=test_split,
+                                 val_split=val_split, seed=seed)
+
+    landmarker = _get_landmarker()
+    result = {}
+    total_skipped = 0
+
+    for split_name in ["train", "val", "test"]:
+        X, y, skipped = _extract_for_pairs(
+            splits_paths[split_name], landmarker, split_name, verbose
+        )
+        result[split_name] = {"X": X, "y": y}
+        total_skipped += skipped
+
+        labels, counts = np.unique(y, return_counts=True) if len(y) > 0 else ([], [])
+        dist = dict(zip(labels.tolist(), counts.tolist())) if len(labels) > 0 else {}
+        print(f"    → {len(X)} features | {skipped} sin pose | dist={dist}")
+
+    landmarker.close()
+
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, "split_features.pkl")
+        with open(save_path, "wb") as f:
+            pickle.dump(result, f)
+        print(f"Features guardadas en: {save_path}")
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
+# PREPARACIÓN DE DATOS (legacy — mantenido para compatibilidad)
+# ─────────────────────────────────────────────────────────────
+
+def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
+    """
+    [LEGACY] Extrae features para TODAS las imágenes.
+    Usar extract_and_split_features() para el pipeline sin leakage.
     """
     landmarker = _get_landmarker()
 
@@ -216,56 +285,30 @@ def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
                 continue
 
             X.append(feats)
-            y.append(class_idx)   # 0=scoliosis_no, 1=scoliosis_yes
-            paths.append(_norm(img_path))   # normalizar al guardar para comparación segura
+            y.append(class_idx)
+            paths.append(_norm(img_path))
 
     landmarker.close()
 
     X = np.array(X, dtype=np.float32)
     y = np.array(y, dtype=np.int32)
 
-    if verbose:
-        print(f"\nTotal extraídas: {len(X)} | Saltadas (sin pose): {skipped}")
-        print(f"Distribución: {dict(zip(*np.unique(y, return_counts=True)))}")
-
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         with open(save_path, "wb") as f:
             pickle.dump({"X": X, "y": y, "paths": paths}, f)
-        print(f"Features guardadas en: {save_path}")
 
     return X, y, paths, skipped
 
 
-# ─────────────────────────────────────────────────────────────
-# PREPARACIÓN DE DATOS
-# ─────────────────────────────────────────────────────────────
-
 def split_data(X, y, paths, dataset_dir,
                test_split=TEST_SPLIT, val_split=VAL_SPLIT, seed=SEED):
-    """
-    Split sin data leakage usando grouped_split().
-
-    Filtra X/y según qué paths pertenecen a cada split,
-    garantizando que ningún aug_* de test/val contamine el train.
-
-    Args:
-        X:           features extraídas (N, NUM_POSE_FEATURES)
-        y:           etiquetas (N,)
-        paths:       lista de rutas absolutas de cada imagen (N,)
-        dataset_dir: carpeta raíz del dataset augmentado
-
-    Returns:
-        X_train, X_val, X_test, y_train, y_val, y_test
-    """
+    """[LEGACY] Usa extract_and_split_features() en su lugar."""
     from data_utils import grouped_split
 
-    print("Construyendo splits sin data leakage...")
     splits = grouped_split(dataset_dir, test_split=test_split,
                            val_split=val_split, seed=seed)
 
-    # grouped_split ya devuelve paths normalizados con _norm()
-    # paths del pkl también se normalizaron al guardar → lookup seguro
     train_paths = {p for p, _ in splits["train"]}
     val_paths   = {p for p, _ in splits["val"]}
     test_paths  = {p for p, _ in splits["test"]}

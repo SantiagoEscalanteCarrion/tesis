@@ -49,7 +49,7 @@ def train_cnn_model(dataset_dir, output_dir):
 def train_pose_model(dataset_dir, output_dir):
     import pickle
     from model_pose import (
-        extract_features_from_dataset, split_data,
+        extract_and_split_features,
         train_pose_classifiers, evaluate_pose_classifiers,
         explain_with_shap
     )
@@ -60,24 +60,24 @@ def train_pose_model(dataset_dir, output_dir):
 
     out = os.path.join(output_dir, "pose")
     os.makedirs(out, exist_ok=True)
-    features_path = os.path.join(out, "pose_features.pkl")
+    split_features_path = os.path.join(out, "split_features.pkl")
 
-    # Extraer o reutilizar features
-    if os.path.exists(features_path):
-        print(f"  Cargando features de pose existentes: {features_path}")
-        with open(features_path, "rb") as f:
-            data = pickle.load(f)
-        X, y, paths = data["X"], data["y"], data["paths"]
+    # Extraer o reutilizar features ya divididas por split
+    if os.path.exists(split_features_path):
+        print(f"  Cargando split_features.pkl existente: {split_features_path}")
+        with open(split_features_path, "rb") as f:
+            splits = pickle.load(f)
     else:
         print("  Extrayendo features de pose (puede tardar varios minutos)...")
-        X, y, paths, skipped = extract_features_from_dataset(
-            dataset_dir, save_path=features_path
+        splits = extract_and_split_features(
+            dataset_dir, save_dir=out
         )
-        print(f"  Imágenes saltadas (sin pose detectada): {skipped}")
 
-    X_train, X_val, X_test, y_train, y_val, y_test = split_data(
-        X, y, paths, dataset_dir
-    )
+    X_train, y_train = splits["train"]["X"], splits["train"]["y"]
+    X_val,   y_val   = splits["val"]["X"],   splits["val"]["y"]
+    X_test,  y_test  = splits["test"]["X"],  splits["test"]["y"]
+
+    print(f"  Split — Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
 
     best_name, best_model, all_models, cv_res = train_pose_classifiers(
         X_train, y_train, X_val, y_val, output_dir=out
@@ -86,7 +86,6 @@ def train_pose_model(dataset_dir, output_dir):
     results_all = evaluate_pose_classifiers(all_models, X_test, y_test, output_dir=out)
     explain_with_shap(best_model, X_test, output_dir=out)
 
-    # Retornar resultados del mejor modelo en formato compatible
     best_res = results_all[best_name]
     print(f"\n[E2 Pose/{best_name}] Accuracy: {best_res['accuracy']:.4f} | "
           f"AUC: {best_res['auc']:.4f}")
@@ -102,14 +101,14 @@ def train_hybrid_model(dataset_dir, output_dir):
     print("█"*55)
 
     out = os.path.join(output_dir, "hybrid")
-    features_path = os.path.join(output_dir, "pose", "pose_features.pkl")
+    split_features_path = os.path.join(output_dir, "pose", "split_features.pkl")
 
-    if not os.path.exists(features_path):
-        print("\n  ERROR: Las features de pose no existen.")
+    if not os.path.exists(split_features_path):
+        print("\n  ERROR: split_features.pkl no existe.")
         print("  Ejecuta primero: python train.py --model pose")
         sys.exit(1)
 
-    model, h1, h2, test_ds = train_hybrid(dataset_dir, features_path, out)
+    model, h1, h2, test_ds = train_hybrid(dataset_dir, split_features_path, out)
     results = evaluate_hybrid(model, test_ds, out)
 
     print(f"\n[E3 Híbrido] Accuracy: {results['accuracy']:.4f} | "
