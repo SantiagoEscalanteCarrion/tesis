@@ -338,9 +338,9 @@ def build_classifiers(seed=SEED):
         "RandomForest": Pipeline([
             ("scaler", StandardScaler()),
             ("clf", RandomForestClassifier(
-                n_estimators=300,
-                max_depth=None,
-                min_samples_leaf=2,
+                n_estimators=100,
+                max_depth=10,
+                min_samples_leaf=4,
                 class_weight="balanced",
                 random_state=seed,
                 n_jobs=-1,
@@ -349,8 +349,8 @@ def build_classifiers(seed=SEED):
         "XGBoost": Pipeline([
             ("scaler", StandardScaler()),
             ("clf", xgb.XGBClassifier(
-                n_estimators=300,
-                max_depth=6,
+                n_estimators=100,
+                max_depth=4,
                 learning_rate=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
@@ -364,7 +364,7 @@ def build_classifiers(seed=SEED):
             ("scaler", StandardScaler()),
             ("clf", SVC(
                 kernel="rbf",
-                C=10,
+                C=1.0,
                 probability=True,
                 class_weight="balanced",
                 random_state=seed,
