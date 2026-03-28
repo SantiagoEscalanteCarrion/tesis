@@ -72,14 +72,14 @@ def build_hybrid_dataset(dataset_dir, pose_features_path,
     pose_paths = pose_data["paths"]                    # lista de str
 
     # ── Split sin data leakage usando grouped_split() ─────────
-    from data_utils import grouped_split
+    from data_utils import grouped_split, _norm
 
     print("Construyendo splits sin data leakage...")
     splits = grouped_split(dataset_dir, test_split=test_split,
                            val_split=val_split, seed=seed)
 
-    # Mapeo path → índice en el pkl de pose para lookup rápido
-    path_to_idx = {p: i for i, p in enumerate(pose_paths)}
+    # Normalizar paths del pkl para comparación segura (/ vs \ en Windows)
+    path_to_idx = {_norm(p): i for i, p in enumerate(pose_paths)}
 
     def _resolve(split_pairs):
         """Retorna índices en pose_X que pertenecen a este split."""

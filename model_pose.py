@@ -39,6 +39,7 @@ from sklearn.metrics import (
 import xgboost as xgb
 import shap
 
+from data_utils import _norm
 from config import (
     CLASSES, POSE_FEATURE_NAMES, NUM_POSE_FEATURES,
     MP_LANDMARKS, OUTPUT_DIR, SEED, TEST_SPLIT, VAL_SPLIT
@@ -216,7 +217,7 @@ def extract_features_from_dataset(dataset_dir, save_path=None, verbose=True):
 
             X.append(feats)
             y.append(class_idx)   # 0=scoliosis_no, 1=scoliosis_yes
-            paths.append(img_path)
+            paths.append(_norm(img_path))   # normalizar al guardar para comparación segura
 
     landmarker.close()
 
@@ -263,14 +264,14 @@ def split_data(X, y, paths, dataset_dir,
     splits = grouped_split(dataset_dir, test_split=test_split,
                            val_split=val_split, seed=seed)
 
-    # Construir sets de paths por split para lookup O(1)
+    # grouped_split ya devuelve paths normalizados con _norm()
+    # paths del pkl también se normalizaron al guardar → lookup seguro
     train_paths = {p for p, _ in splits["train"]}
     val_paths   = {p for p, _ in splits["val"]}
     test_paths  = {p for p, _ in splits["test"]}
 
-    # Filtrar X/y por split
     def _filter(path_set):
-        idx = [i for i, p in enumerate(paths) if p in path_set]
+        idx = [i for i, p in enumerate(paths) if _norm(p) in path_set]
         return X[idx], y[idx]
 
     X_train, y_train = _filter(train_paths)

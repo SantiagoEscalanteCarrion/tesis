@@ -34,7 +34,7 @@ from config import (
     IMG_SIZE, BATCH_SIZE, EPOCHS_HEAD, EPOCHS_FINE,
     LEARNING_RATE_HEAD, LEARNING_RATE_FINE, OUTPUT_DIR, SEED
 )
-from data_utils import grouped_split
+from data_utils import grouped_split, _norm
 
 
 # ─────────────────────────────────────────────────────────────
@@ -59,7 +59,8 @@ def build_datasets(dataset_dir, val_split=0.15, test_split=0.15, seed=SEED):
     AUTOTUNE = tf.data.AUTOTUNE
 
     def _make_ds(pairs, shuffle=False):
-        paths  = [p for p, _ in pairs]
+        # _norm() ya fue aplicado en grouped_split; tf necesita strings planos
+        paths  = [str(p) for p, _ in pairs]
         labels = [float(l) for _, l in pairs]
 
         def load(path, label):
