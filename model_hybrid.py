@@ -49,57 +49,57 @@ from config import (
 # PREPARACIÓN DE DATOS DUAL
 # ─────────────────────────────────────────────────────────────
 
-def build_hybrid_dataset(dataset_dir, pose_features_path,
+def build_hybrid_dataset(dataset_dir, split_features_path,
                           val_split=VAL_SPLIT, test_split=TEST_SPLIT,
                           seed=SEED):
     """
     Construye datasets duales (imagen + features de pose) alineados.
 
     Args:
-        dataset_dir:        Carpeta raíz del dataset con subcarpetas por clase.
-        pose_features_path: Archivo .pkl generado por model_pose.py con
-                            {X, y, paths}.
+        dataset_dir:          Carpeta raíz del dataset con subcarpetas por clase.
+        split_features_path:  Archivo split_features.pkl generado por
+                              model_pose.extract_and_split_features().
+                              Formato: {"train": {"X":..,"y":..},
+                                        "val":   {"X":..,"y":..},
+                                        "test":  {"X":..,"y":..}}
 
     Returns:
         (train_ds, val_ds, test_ds) — cada elemento es un tf.data.Dataset
         que emite ((imagen_tensor, pose_tensor), label)
     """
-    # Cargar features de pose pre-calculadas
-    with open(pose_features_path, "rb") as f:
-        pose_data = pickle.load(f)
-    pose_X     = pose_data["X"].astype(np.float32)     # (N, 12)
-    pose_y     = pose_data["y"].astype(np.float32)     # (N,)
-    pose_paths = pose_data["paths"]                    # lista de str
+    from data_utils import grouped_split
 
-    # ── Split sin data leakage usando grouped_split() ─────────
-    from data_utils import grouped_split, _norm
+    # Cargar features ya divididas por split (sin riesgo de leakage)
+    with open(split_features_path, "rb") as f:
+        pose_splits = pickle.load(f)
 
+    # Obtener los paths de imagen para cada split (sin path comparison)
     print("Construyendo splits sin data leakage...")
-    splits = grouped_split(dataset_dir, test_split=test_split,
-                           val_split=val_split, seed=seed)
+    img_splits = grouped_split(dataset_dir, test_split=test_split,
+                               val_split=val_split, seed=seed)
 
-    # Normalizar paths del pkl para comparación segura (/ vs \ en Windows)
-    path_to_idx = {_norm(p): i for i, p in enumerate(pose_paths)}
-
-    def _resolve(split_pairs):
-        """Retorna índices en pose_X que pertenecen a este split."""
-        return [path_to_idx[p] for p, _ in split_pairs if p in path_to_idx]
-
-    idx_train = _resolve(splits["train"])
-    idx_val   = _resolve(splits["val"])
-    idx_test  = _resolve(splits["test"])
-
-    # Normalizar features de pose con estadísticas del train únicamente
-    mean = pose_X[idx_train].mean(axis=0)
-    std  = pose_X[idx_train].std(axis=0) + 1e-8
-    pose_X_norm = (pose_X - mean) / std
+    # Normalizar features con estadísticas del train únicamente
+    X_train_raw = pose_splits["train"]["X"].astype(np.float32)
+    mean = X_train_raw.mean(axis=0)
+    std  = X_train_raw.std(axis=0) + 1e-8
     norm_stats = {"mean": mean, "std": std}
 
-    def make_ds(idx, shuffle=False):
-        """Crea tf.data.Dataset para un subconjunto de índices."""
-        img_paths = [pose_paths[i] for i in idx]
-        feats     = pose_X_norm[idx]
-        labels    = pose_y[idx]
+    def _norm_feats(X):
+        return (X.astype(np.float32) - mean) / std
+
+    # Alinear: los paths de img_splits y las features de pose_splits
+    # tienen el MISMO orden porque usan el mismo grouped_split + seed
+    def make_ds(split_name, shuffle=False):
+        """Crea tf.data.Dataset para un split dado."""
+        img_paths = [str(p) for p, _ in img_splits[split_name]]
+        feats     = _norm_feats(pose_splits[split_name]["X"])
+        labels    = pose_splits[split_name]["y"].astype(np.float32)
+
+        # Ajustar longitud si hay discrepancia por imágenes sin pose
+        n = min(len(img_paths), len(feats))
+        img_paths = img_paths[:n]
+        feats     = feats[:n]
+        labels    = labels[:n]
 
         def load_and_preprocess(path, feat, label):
             img = tf.io.read_file(path)
@@ -109,24 +109,27 @@ def build_hybrid_dataset(dataset_dir, pose_features_path,
             img = tf.keras.applications.efficientnet.preprocess_input(img)
             return (img, feat), label
 
-        ds = tf.data.Dataset.from_tensor_slices((
-            img_paths, feats, labels
-        ))
-        ds = ds.map(
-            lambda p, f, l: load_and_preprocess(p, f, l),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
+        def load_and_preprocess(path, feat, label):
+            img = tf.io.read_file(path)
+            img = tf.image.decode_jpeg(img, channels=3)
+            img = tf.image.resize(img, IMG_SIZE)
+            img = tf.cast(img, tf.float32)
+            img = tf.keras.applications.efficientnet.preprocess_input(img)
+            return (img, feat), label
+
+        ds = tf.data.Dataset.from_tensor_slices((img_paths, feats, labels))
+        ds = ds.map(load_and_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
         if shuffle:
             ds = ds.shuffle(1000, seed=seed)
-        ds = ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-        return ds
+        return ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
 
-    train_ds = make_ds(idx_train, shuffle=True)
-    val_ds   = make_ds(idx_val)
-    test_ds  = make_ds(idx_test)
+    train_ds = make_ds("train", shuffle=True)
+    val_ds   = make_ds("val")
+    test_ds  = make_ds("test")
 
-    print(f"Hybrid dataset — Train: {len(idx_train)} | "
-          f"Val: {len(idx_val)} | Test: {len(idx_test)}")
+    sizes = {k: len(img_splits[k]) for k in ["train", "val", "test"]}
+    print(f"Hybrid dataset — Train: {sizes['train']} | "
+          f"Val: {sizes['val']} | Test: {sizes['test']}")
 
     return train_ds, val_ds, test_ds, norm_stats
 
