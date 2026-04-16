@@ -314,10 +314,236 @@ def _report_robustness(results, model_name, output_dir, k):
     plt.tight_layout()
 
     safe_name = model_name.replace(" ", "_").replace("+", "").replace("/", "_")
+    safe_name = safe_name.encode("ascii", errors="ignore").decode("ascii").strip("_")
     path = os.path.join(output_dir, f"robustness_{safe_name}.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")
-    print(f"  Gráfica guardada: {path}")
-    plt.show()
+    print(f"  Grafica guardada: {path}")
+    plt.close("all")
+
+
+# ─────────────────────────────────────────────────────────────
+# ROBUSTEZ — MODELO HÍBRIDO (E3)
+# ─────────────────────────────────────────────────────────────
+
+def noise_robustness_hybrid(dataset_dir, output_dir, k=5, seed=SEED):
+    """
+    5-fold CV para el modelo Híbrido (CNN + Pose) con niveles crecientes
+    de ruido gaussiano aplicado SIMULTÁNEAMENTE a ambos streams:
+      - Ruido de píxeles en la imagen (σ × 255)
+      - Ruido en las features de pose (σ × std_train)
+
+    Esto simula condiciones clínicas donde tanto la imagen como la
+    estimación de pose están degradadas al mismo tiempo.
+    """
+    import tensorflow as tf
+    from model_hybrid import build_hybrid_model
+    from model_pose import extract_pose_features_from_image, _get_landmarker
+    from config import EPOCHS_HEAD, EPOCHS_FINE, LEARNING_RATE_HEAD, LEARNING_RATE_FINE
+    from cross_validate import build_fold_paths
+
+    out = os.path.join(output_dir, "robustness_hybrid")
+    os.makedirs(out, exist_ok=True)
+
+    print("\n" + "█"*60)
+    print("  ROBUSTEZ BAJO RUIDO — Modelo Híbrido E3 (CNN + Pose)")
+    print("█"*60)
+
+    # ── Cargar imágenes originales y sus features de pose ────────
+    orig_paths, orig_labels = get_original_images(dataset_dir)
+    X_pose, y_pose = _load_orig_features(dataset_dir, seed)
+
+    # Alinear: get_original_images y _load_orig_features usan el mismo
+    # orden (sorted por clase), pero _load_orig_features puede descartar
+    # imágenes sin pose detectada. Reconstruimos el alineamiento.
+    cache_path = os.path.join(OUTPUT_DIR, "feature_diagnosis", "orig_features_cache.pkl")
+    if os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
+            cached = pickle.load(f)
+        # El cache tiene las mismas muestras que X_pose, y_pose
+        # Necesitamos los paths alineados con el cache
+        pose_paths, pose_labels_aligned = [], []
+        for label_idx, class_name in enumerate(CLASSES):
+            class_dir = os.path.join(dataset_dir, class_name)
+            for fname in sorted(os.listdir(class_dir)):
+                if fname.startswith("orig_") and fname.lower().endswith(".jpg"):
+                    pose_paths.append(os.path.join(class_dir, fname))
+                    pose_labels_aligned.append(label_idx)
+        pose_paths = np.array(pose_paths)
+        pose_labels_aligned = np.array(pose_labels_aligned)
+    else:
+        # Extraer features en vivo y registrar qué paths tuvieron éxito
+        print("  Extrayendo features para alineamiento de paths...")
+        landmarker = _get_landmarker()
+        pose_paths_ok, feats_ok, labels_ok = [], [], []
+        for label_idx, class_name in enumerate(CLASSES):
+            class_dir = os.path.join(dataset_dir, class_name)
+            for fname in sorted(os.listdir(class_dir)):
+                if not (fname.startswith("orig_") and fname.lower().endswith(".jpg")):
+                    continue
+                fpath = os.path.join(class_dir, fname)
+                feats = extract_pose_features_from_image(fpath, landmarker)
+                if feats is not None:
+                    pose_paths_ok.append(fpath)
+                    feats_ok.append(feats)
+                    labels_ok.append(label_idx)
+        landmarker.close()
+        pose_paths = np.array(pose_paths_ok)
+        X_pose = np.array(feats_ok, dtype=np.float32)
+        y_pose = np.array(labels_ok)
+        pose_labels_aligned = y_pose
+
+    # Usar solo muestras que tienen pose detectada
+    n = len(X_pose)
+    pose_paths = pose_paths[:n]
+    pose_labels_aligned = pose_labels_aligned[:n]
+    print(f"  Total: {n} imágenes originales con pose detectada")
+
+    AUTOTUNE = tf.data.AUTOTUNE
+    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=seed)
+    results = {sigma: [] for sigma in NOISE_LEVELS}
+
+    for fold_idx, (train_idx, test_idx) in enumerate(skf.split(pose_paths, y_pose), 1):
+        print(f"\n  ── Fold {fold_idx}/{k} ─────────────────────────────────")
+
+        # Split de paths e imágenes
+        train_paths_orig = pose_paths[train_idx]
+        train_lbl_orig   = y_pose[train_idx]
+        test_paths       = pose_paths[test_idx]
+        test_lbl         = y_pose[test_idx]
+
+        # Expandir train con aumentadas
+        train_all, train_all_lbl = build_fold_paths(
+            train_paths_orig, train_lbl_orig, dataset_dir
+        )
+
+        # Features de pose para test (sin ruido aún)
+        X_test_pose = X_pose[test_idx]
+
+        # Estadísticas del train pose para escalar el ruido de features
+        X_train_pose = X_pose[train_idx]
+        train_pose_std = X_train_pose.std(axis=0) + 1e-8
+
+        # Normalización de features (media/std del train)
+        pose_mean = X_train_pose.mean(axis=0)
+        pose_std  = X_train_pose.std(axis=0) + 1e-8
+
+        X_test_pose_norm = (X_test_pose - pose_mean) / pose_std
+
+        # Dataset de entrenamiento con features normalizadas (train augmented)
+        # Para el train, necesitamos extraer features de las imágenes augmentadas
+        # Usamos solo features de originales (las aumentadas comparten misma pose base)
+        X_train_norm = (X_train_pose - pose_mean) / pose_std
+
+        def _make_train_ds(img_paths, img_labels, pose_feats_orig, pose_labels_orig):
+            """Dataset de train: solo originales para features de pose, augmented para imagen."""
+            # Para simplificar: usamos pares alineados (img_orig, pose_feat)
+            # expand pose features para coincidir con imágenes aumentadas
+            img_p = img_paths.tolist()
+            img_l = img_labels.astype(np.float32).tolist()
+            # Reconstruir features expandidas para cada imagen en train_all
+            n_aug_per_orig = len(img_paths) // len(pose_feats_orig) if len(pose_feats_orig) > 0 else 1
+            # Usaremos solo originales del train para el entrenamiento (más limpio)
+            p_arr = train_paths_orig.tolist()
+            f_arr = X_train_norm.tolist()
+            l_arr = train_lbl_orig.astype(np.float32).tolist()
+
+            def load_fn(path, feat, label):
+                img = tf.io.read_file(path)
+                img = tf.image.decode_jpeg(img, channels=3)
+                img = tf.image.resize(img, IMG_SIZE)
+                img = tf.cast(img, tf.float32)
+                img = tf.keras.applications.efficientnet.preprocess_input(img)
+                return (img, feat), label
+
+            ds = tf.data.Dataset.from_tensor_slices((p_arr, f_arr, l_arr))
+            ds = ds.map(load_fn, num_parallel_calls=AUTOTUNE)
+            ds = ds.shuffle(500, seed=seed)
+            return ds.batch(BATCH_SIZE).prefetch(AUTOTUNE)
+
+        def _make_test_ds(img_paths, img_labels, pose_feats_norm, pixel_sigma=0.0, feat_sigma=0.0, rng_seed=0):
+            p_arr = img_paths.tolist()
+            l_arr = img_labels.astype(np.float32).tolist()
+            f_arr = pose_feats_norm.tolist()
+
+            def load_fn(path, feat, label):
+                img = tf.io.read_file(path)
+                img = tf.image.decode_jpeg(img, channels=3)
+                img = tf.image.resize(img, IMG_SIZE)
+                img = tf.cast(img, tf.float32)
+                if pixel_sigma > 0.0:
+                    noise = tf.random.normal(tf.shape(img), stddev=pixel_sigma * 255.0,
+                                             seed=rng_seed)
+                    img = tf.clip_by_value(img + noise, 0.0, 255.0)
+                img = tf.keras.applications.efficientnet.preprocess_input(img)
+                return (img, feat), label
+
+            ds = tf.data.Dataset.from_tensor_slices((p_arr, f_arr, l_arr))
+            ds = ds.map(load_fn, num_parallel_calls=AUTOTUNE)
+            return ds.batch(BATCH_SIZE).prefetch(AUTOTUNE)
+
+        # Entrenar modelo sin ruido
+        train_ds = _make_train_ds(train_paths_orig, train_lbl_orig,
+                                   X_train_norm, train_lbl_orig)
+
+        model = build_hybrid_model(trainable_base=False)
+        model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE_HEAD),
+                      loss="binary_crossentropy", metrics=["accuracy"])
+        model.fit(train_ds, epochs=EPOCHS_HEAD, verbose=0,
+                  callbacks=[tf.keras.callbacks.EarlyStopping(
+                      monitor="loss", patience=3, restore_best_weights=True)])
+
+        bb = model.get_layer("efficientnetb0"); bb.trainable = True
+        for layer in bb.layers:
+            if not layer.name.startswith(("block6", "block7", "top")):
+                layer.trainable = False
+        model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE_FINE),
+                      loss="binary_crossentropy", metrics=["accuracy"])
+        model.fit(train_ds, epochs=EPOCHS_FINE, verbose=0,
+                  callbacks=[tf.keras.callbacks.EarlyStopping(
+                      monitor="loss", patience=3, restore_best_weights=True)])
+
+        # Evaluar con cada nivel de ruido
+        for sigma in NOISE_LEVELS:
+            rng = np.random.default_rng(seed + fold_idx)
+
+            if sigma > 0.0:
+                # Ruido en features de pose (espacio normalizado → escalar con std train)
+                feat_noise = rng.normal(
+                    loc=0.0,
+                    scale=sigma * train_pose_std / (pose_std + 1e-8),
+                    size=X_test_pose_norm.shape
+                ).astype(np.float32)
+                X_test_noisy = X_test_pose_norm + feat_noise
+            else:
+                X_test_noisy = X_test_pose_norm
+
+            test_ds = _make_test_ds(
+                test_paths, test_lbl, X_test_noisy,
+                pixel_sigma=sigma, feat_sigma=sigma,
+                rng_seed=seed + fold_idx
+            )
+
+            y_true, y_prob = [], []
+            for (imgs, poses), lbls in test_ds:
+                probs = model.predict([imgs, poses], verbose=0)
+                y_prob.extend(probs.flatten().tolist())
+                y_true.extend(lbls.numpy().flatten().tolist())
+
+            y_true = np.array(y_true)
+            y_prob = np.array(y_prob)
+            y_pred = (y_prob >= 0.5).astype(int)
+
+            acc = accuracy_score(y_true, y_pred)
+            f1  = f1_score(y_true, y_pred, average="macro", zero_division=0)
+            auc = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else float("nan")
+
+            results[sigma].append({"acc": acc, "f1": f1, "auc": auc})
+            print(f"    σ={sigma:.2f}  Acc={acc:.4f}  F1={f1:.4f}  AUC={auc:.4f}")
+
+        tf.keras.backend.clear_session()
+
+    _report_robustness(results, "Hibrido CNN+Pose (E3)", out, k)
+    return results
 
 
 # ─────────────────────────────────────────────────────────────
@@ -328,7 +554,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Evaluación de robustez bajo ruido gaussiano"
     )
-    parser.add_argument("--model", choices=["pose", "cnn", "all"],
+    parser.add_argument("--model", choices=["pose", "cnn", "hybrid", "all"],
                         default="pose",
                         help="Modelo a evaluar (default: pose)")
     parser.add_argument("--k", type=int, default=5,
@@ -344,3 +570,6 @@ if __name__ == "__main__":
 
     if args.model in ("cnn", "all"):
         noise_robustness_cnn(args.dataset, args.output, k=args.k)
+
+    if args.model in ("hybrid", "all"):
+        noise_robustness_hybrid(args.dataset, args.output, k=args.k)
