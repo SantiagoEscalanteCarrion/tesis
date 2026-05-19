@@ -134,21 +134,35 @@ def plot_robustness_combined_en(pkl_cnn, pkl_pose, pkl_hybrid, output_dir):
 
 def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
     """
-    Genera panel 2×2: (scoliosis_yes, scoliosis_no) × (original, Grad-CAM++ overlay).
-    Usa tf-keras-vis GradcamPlusPlus para manejar el submodelo EfficientNetB0 anidado.
+    Genera panel 2×2: (scoliosis_yes, scoliosis_no) × (original, Grad-CAM overlay).
+    Divide el modelo en dos sub-modelos para manejar EfficientNetB0 anidado:
+      model_a: backbone.input → top_activation  (feature maps espaciales 7×7×1280)
+      model_b: top_activation shape → GAP → BN → FC1 → sigmoid
+    GradientTape vigila la salida de model_a antes de pasar por model_b.
     """
     import tensorflow as tf
     from matplotlib import cm
-    from tf_keras_vis.gradcam_plus_plus import GradcamPlusPlus
-    from tf_keras_vis.utils.model_modifiers import ReplaceToLinear
 
-    model = tf.keras.models.load_model(model_path)
+    model    = tf.keras.models.load_model(model_path)
+    backbone = model.get_layer("efficientnetb0")
 
-    # Reemplaza la activación final (sigmoid) por lineal para que los gradientes fluyan
-    gradcam = GradcamPlusPlus(model, model_modifier=ReplaceToLinear(), clone=True)
+    # model_a: imagen preprocesada → mapas de características espaciales
+    model_a = tf.keras.Model(
+        inputs=backbone.input,
+        outputs=backbone.get_layer("top_activation").output
+    )
 
-    def _score_scoliosis(output):
-        return output[:, 0]
+    # model_b: mapas espaciales → probabilidad de escoliosis
+    # top_dropout es identity en inference; se omite para evitar dependencia de nombre
+    top_act_shape = backbone.get_layer("top_activation").output_shape[1:]  # (7,7,1280)
+    _inp_b = tf.keras.Input(shape=top_act_shape)
+    _x     = model.get_layer("gap")(_inp_b)
+    _x     = model.get_layer("batch_normalization")(_x)
+    _x     = model.get_layer("dropout")(_x)
+    _x     = model.get_layer("fc1")(_x)
+    _x     = model.get_layer("dropout_1")(_x)
+    _x     = model.get_layer("output")(_x)
+    model_b = tf.keras.Model(inputs=_inp_b, outputs=_x)
 
     def _gradcam_overlay(image_path):
         img_raw = cv2.imread(image_path)
@@ -158,14 +172,22 @@ def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
         img_arr = tf.keras.preprocessing.image.load_img(image_path, target_size=IMG_SIZE)
         img_arr = tf.keras.preprocessing.image.img_to_array(img_arr)
         img_arr = tf.keras.applications.efficientnet.preprocess_input(img_arr)
-        img_arr = np.expand_dims(img_arr, axis=0)  # (1, H, W, 3)
+        img_arr = np.expand_dims(img_arr, axis=0)  # (1, 224, 224, 3)
 
-        # Predicción original (sin modifier)
         prob = float(model.predict(img_arr, verbose=0)[0, 0])
 
-        # Grad-CAM++ — penultimate_layer=-1 busca automáticamente la última conv
-        cam = gradcam(_score_scoliosis, img_arr, penultimate_layer=-1)
-        heatmap = cam[0]  # (H, W) ya normalizado [0, 1]
+        # Grad-CAM: tape vigila conv_out ANTES de pasar por model_b
+        with tf.GradientTape() as tape:
+            conv_out = model_a(img_arr, training=False)   # (1, 7, 7, 1280)
+            tape.watch(conv_out)
+            preds    = model_b(conv_out, training=False)  # (1, 1)
+            loss     = preds[:, 0]
+
+        grads   = tape.gradient(loss, conv_out)                          # (1, 7, 7, 1280)
+        alpha   = tf.reduce_mean(grads, axis=(1, 2), keepdims=True)      # (1, 1, 1, 1280)
+        heatmap = tf.nn.relu(tf.reduce_sum(alpha * conv_out, axis=-1))   # (1, 7, 7)
+        heatmap = heatmap[0].numpy()
+        heatmap = heatmap / (heatmap.max() + 1e-8)
 
         heatmap_r = cv2.resize(heatmap, IMG_SIZE)
         colored   = (cm.jet(heatmap_r)[:, :, :3] * 255).astype(np.uint8)
