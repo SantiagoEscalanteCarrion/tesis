@@ -153,10 +153,22 @@ def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
         img_arr = tf.keras.applications.efficientnet.preprocess_input(img_arr)
         img_arr = np.expand_dims(img_arr, axis=0)
 
-        grad_model = Model(
-            inputs=model.inputs,
-            outputs=[model.get_layer("top_activation").output, model.output]
+        backbone = model.get_layer("efficientnetb0")
+        backbone_multi = Model(
+            inputs=backbone.input,
+            outputs=[backbone.get_layer("top_activation").output, backbone.output]
         )
+        _inp = tf.keras.Input(shape=(*IMG_SIZE, 3))
+        _x = model.get_layer("random_flip")(_inp)
+        _x = model.get_layer("random_rotation")(_x)
+        _conv_out, _bb_out = backbone_multi(_x)
+        _x = model.get_layer("gap")(_bb_out)
+        _x = model.get_layer("batch_normalization")(_x)
+        _x = model.get_layer("dropout")(_x)
+        _x = model.get_layer("fc1")(_x)
+        _x = model.get_layer("dropout_1")(_x)
+        _pred = model.get_layer("output")(_x)
+        grad_model = Model(inputs=_inp, outputs=[_conv_out, _pred])
         with tf.GradientTape() as tape:
             conv_out, preds = grad_model(img_arr)
             loss = preds[:, 0]
