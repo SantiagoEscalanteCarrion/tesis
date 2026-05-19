@@ -154,7 +154,7 @@ def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
 
     # model_b: mapas espaciales → probabilidad de escoliosis
     # top_dropout es identity en inference; se omite para evitar dependencia de nombre
-    top_act_shape = backbone.get_layer("top_activation").output_shape[1:]  # (7,7,1280)
+    top_act_shape = model_a.output_shape[1:]  # (7,7,1280) — leído desde model_a ya construido
     _inp_b = tf.keras.Input(shape=top_act_shape)
     _x     = model.get_layer("gap")(_inp_b)
     _x     = model.get_layer("batch_normalization")(_x)
