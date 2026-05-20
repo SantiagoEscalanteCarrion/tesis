@@ -137,8 +137,9 @@ def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
     Genera panel 2×2: (scoliosis_yes, scoliosis_no) × (original, Grad-CAM overlay).
     Divide el modelo en dos sub-modelos para manejar EfficientNetB0 anidado:
       model_a: backbone.input → top_activation  (feature maps espaciales 7×7×1280)
-      model_b: top_activation shape → GAP → BN → FC1 → sigmoid
-    GradientTape vigila la salida de model_a antes de pasar por model_b.
+      model_b: top_activation shape → GAP → BN → FC1 → logit lineal (sin sigmoid)
+    Sigmoid se omite en model_b para evitar saturación de gradientes cuando el modelo
+    es muy confiado. La predicción real usa model completo con sigmoid.
     """
     import tensorflow as tf
     from matplotlib import cm
@@ -152,19 +153,22 @@ def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
         outputs=backbone.get_layer("top_activation").output
     )
 
-    # model_b: mapas espaciales → probabilidad de escoliosis
-    # top_dropout es identity en inference; se omite para evitar dependencia de nombre
-    top_act_shape = model_a.output_shape[1:]  # (7,7,1280) — leído desde model_a ya construido
-    _inp_b = tf.keras.Input(shape=top_act_shape)
-    _x     = model.get_layer("gap")(_inp_b)
-    _x     = model.get_layer("batch_normalization")(_x)
-    _x     = model.get_layer("dropout")(_x)
-    _x     = model.get_layer("fc1")(_x)
-    _x     = model.get_layer("dropout_1")(_x)
-    _x     = model.get_layer("output")(_x)
+    # model_b: mapas espaciales → logit lineal (sin sigmoid)
+    # Sigmoid satura los gradientes cuando el modelo es muy confiado (pred ≈ 0 o 1)
+    top_act_shape = model_a.output_shape[1:]  # (7,7,1280)
+    _inp_b  = tf.keras.Input(shape=top_act_shape)
+    _x      = model.get_layer("gap")(_inp_b)
+    _x      = model.get_layer("batch_normalization")(_x)
+    _x      = model.get_layer("dropout")(_x)
+    _x      = model.get_layer("fc1")(_x)
+    _x      = model.get_layer("dropout_1")(_x)
+    # Capa lineal con los mismos pesos que "output" pero sin activación sigmoid
+    _linear = tf.keras.layers.Dense(1, activation=None, name="output_linear")
+    _x      = _linear(_x)
     model_b = tf.keras.Model(inputs=_inp_b, outputs=_x)
+    _linear.set_weights(model.get_layer("output").get_weights())
 
-    def _gradcam_overlay(image_path):
+    def _gradcam_overlay(image_path, scoliosis_class=True):
         img_raw = cv2.imread(image_path)
         img_raw = cv2.resize(img_raw, IMG_SIZE)
         img_rgb = cv2.cvtColor(img_raw, cv2.COLOR_BGR2RGB)
@@ -176,12 +180,14 @@ def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
 
         prob = float(model.predict(img_arr, verbose=0)[0, 0])
 
-        # Grad-CAM: tape vigila conv_out ANTES de pasar por model_b
+        # Grad-CAM sobre el logit de la clase correcta
+        # scoliosis_class=True  → maximiza logit de escoliosis
+        # scoliosis_class=False → minimiza logit de escoliosis (= maximiza "sano")
         with tf.GradientTape() as tape:
             conv_out = model_a(img_arr, training=False)   # (1, 7, 7, 1280)
             tape.watch(conv_out)
-            preds    = model_b(conv_out, training=False)  # (1, 1)
-            loss     = preds[:, 0]
+            logit    = model_b(conv_out, training=False)  # (1, 1)
+            loss     = logit[:, 0] if scoliosis_class else -logit[:, 0]
 
         grads   = tape.gradient(loss, conv_out)                          # (1, 7, 7, 1280)
         alpha   = tf.reduce_mean(grads, axis=(1, 2), keepdims=True)      # (1, 1, 1, 1280)
@@ -196,8 +202,8 @@ def plot_gradcam_panel(model_path, img_yes_path, img_no_path, output_dir):
 
         return img_rgb, overlay, prob
 
-    yes_orig, yes_overlay, yes_prob = _gradcam_overlay(img_yes_path)
-    no_orig,  no_overlay,  no_prob  = _gradcam_overlay(img_no_path)
+    yes_orig, yes_overlay, yes_prob = _gradcam_overlay(img_yes_path, scoliosis_class=True)
+    no_orig,  no_overlay,  no_prob  = _gradcam_overlay(img_no_path,  scoliosis_class=False)
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 10))
     fig.patch.set_facecolor("#f8f9fa")
