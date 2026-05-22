@@ -110,7 +110,7 @@ def build_fold_paths(train_orig_paths, train_orig_labels, dataset_dir):
 
 def kfold_pose(dataset_dir, output_dir, k=5, seed=SEED):
     """
-    K-Fold CV para el modelo Pose + RandomForest.
+    K-Fold CV para el modelo Pose + XGBoost.
     Rápido (~5-10 min total).
     """
     from model_pose import extract_pose_features_from_image, _get_landmarker
@@ -120,7 +120,7 @@ def kfold_pose(dataset_dir, output_dir, k=5, seed=SEED):
     os.makedirs(out, exist_ok=True)
 
     print("\n" + "█"*55)
-    print(f"  K-FOLD CV (k={k}) — Pose + ML")
+    print(f"  K-FOLD CV (k={k}) — Pose + XGBoost")
     print("█"*55)
 
     orig_paths, orig_labels = get_original_images(dataset_dir)
@@ -167,8 +167,7 @@ def kfold_pose(dataset_dir, output_dir, k=5, seed=SEED):
         y_train = np.array(y_train)
         y_test  = np.array(y_test)
 
-        # Entrenar RandomForest (el más rápido)
-        clf = build_classifiers(seed)["RandomForest"]
+        clf = build_classifiers(seed)["XGBoost"]
         clf.fit(X_train, y_train)
 
         y_pred = clf.predict(X_test)
@@ -183,7 +182,7 @@ def kfold_pose(dataset_dir, output_dir, k=5, seed=SEED):
 
     landmarker.close()
 
-    _report_and_plot(fold_metrics, "Pose + RandomForest", out, k)
+    _report_and_plot(fold_metrics, "Pose + XGBoost", out, k)
     return fold_metrics
 
 
@@ -298,6 +297,169 @@ def kfold_cnn(dataset_dir, output_dir, k=5, seed=SEED):
 
 
 # ─────────────────────────────────────────────────────────────
+# K-FOLD: MODELO HÍBRIDO
+# ─────────────────────────────────────────────────────────────
+
+def kfold_hybrid(dataset_dir, output_dir, k=5, seed=SEED):
+    """
+    K-Fold CV para el modelo Híbrido (CNN + Pose).
+    Las pose features de imágenes augmentadas se heredan de su original fuente,
+    lo que es válido porque la augmentación geométrica no altera la postura.
+    """
+    import tensorflow as tf
+    from model_pose import extract_pose_features_from_image, _get_landmarker
+    from model_hybrid import build_hybrid_model
+    from config import (EPOCHS_HEAD, EPOCHS_FINE,
+                        LEARNING_RATE_HEAD, LEARNING_RATE_FINE,
+                        NUM_POSE_FEATURES, BATCH_SIZE)
+
+    out = os.path.join(output_dir, "kfold_hybrid")
+    os.makedirs(out, exist_ok=True)
+
+    print("\n" + "█"*55)
+    print(f"  K-FOLD CV (k={k}) — Hybrid (CNN + Pose)")
+    print("█"*55)
+
+    orig_paths, orig_labels = get_original_images(dataset_dir)
+    print(f"  Total imágenes originales: {len(orig_paths)}")
+
+    # Extraer pose features de todos los originales una sola vez
+    print("  Extrayendo pose features (solo originales)...")
+    landmarker = _get_landmarker()
+    orig_feats = []
+    for path in orig_paths:
+        f = extract_pose_features_from_image(str(path), landmarker)
+        orig_feats.append(f if f is not None
+                          else np.zeros(NUM_POSE_FEATURES, dtype=np.float32))
+    landmarker.close()
+    orig_feats = np.array(orig_feats, dtype=np.float32)
+
+    # Contar originales por clase (necesario para mapear aug → orig)
+    n_orig_per_class = {}
+    for label_idx, class_name in enumerate(CLASSES):
+        class_dir = os.path.join(dataset_dir, class_name)
+        n_orig_per_class[label_idx] = len([
+            f for f in os.listdir(class_dir)
+            if f.startswith("orig_") and f.lower().endswith(".jpg")
+        ])
+
+    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=seed)
+    fold_metrics = []
+
+    for fold_idx, (train_idx, test_idx) in enumerate(
+            skf.split(orig_paths, orig_labels), 1):
+        print(f"\n  ── Fold {fold_idx}/{k} ─────────────────────────")
+
+        train_orig       = orig_paths[train_idx]
+        train_lbl        = orig_labels[train_idx]
+        test_orig        = orig_paths[test_idx]
+        test_lbl         = orig_labels[test_idx]
+        train_orig_feats = orig_feats[train_idx]
+        test_orig_feats  = orig_feats[test_idx]
+
+        # Obtener rutas aug + orig para train
+        train_all_paths, train_all_lbl = build_fold_paths(
+            train_orig, train_lbl, dataset_dir
+        )
+        print(f"    Train: {len(train_all_paths)} imgs | Test: {len(test_orig)} imgs")
+
+        # Asignar pose features a cada imagen de train
+        # orig → feature directa | aug → feature del orig fuente
+        orig_feat_dict = {str(p): f for p, f in zip(train_orig, train_orig_feats)}
+        train_all_feats = []
+        for path, label in zip(train_all_paths, train_all_lbl):
+            path_str = str(path)
+            if os.path.basename(path_str).startswith("orig_"):
+                feat = orig_feat_dict[path_str]
+            else:
+                m = re.search(r"aug_(\d+)", os.path.basename(path_str))
+                if m:
+                    src_idx   = int(m.group(1)) % n_orig_per_class[label]
+                    src_fname = f"orig_{src_idx:04d}.jpg"
+                    src_path  = os.path.join(dataset_dir, CLASSES[label], src_fname)
+                    feat = orig_feat_dict.get(str(src_path),
+                                             np.zeros(NUM_POSE_FEATURES, dtype=np.float32))
+                else:
+                    feat = np.zeros(NUM_POSE_FEATURES, dtype=np.float32)
+            train_all_feats.append(feat)
+        train_all_feats = np.array(train_all_feats, dtype=np.float32)
+
+        # Normalizar con estadísticas del train únicamente
+        mean = train_all_feats.mean(axis=0)
+        std  = train_all_feats.std(axis=0) + 1e-8
+        train_all_feats = (train_all_feats - mean) / std
+        test_feats_norm = (test_orig_feats  - mean) / std
+
+        def make_ds(paths, feats, labels, shuffle=False):
+            def load(path, feat, label):
+                img = tf.io.read_file(path)
+                img = tf.image.decode_jpeg(img, channels=3)
+                img = tf.image.resize(img, IMG_SIZE)
+                img = tf.cast(img, tf.float32)
+                img = tf.keras.applications.efficientnet.preprocess_input(img)
+                return (img, feat), label
+            ds = tf.data.Dataset.from_tensor_slices((
+                [str(p) for p in paths],
+                feats.tolist(),
+                labels.astype(np.float32).tolist()
+            ))
+            ds = ds.map(load, num_parallel_calls=tf.data.AUTOTUNE)
+            if shuffle:
+                ds = ds.shuffle(500, seed=seed)
+            return ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+
+        train_ds = make_ds(train_all_paths, train_all_feats, train_all_lbl, shuffle=True)
+        test_ds  = make_ds(test_orig, test_feats_norm, test_lbl)
+
+        # Fase 1: head training (backbone congelado)
+        model = build_hybrid_model(trainable_base=False)
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(LEARNING_RATE_HEAD),
+            loss="binary_crossentropy", metrics=["accuracy"]
+        )
+        model.fit(train_ds, epochs=EPOCHS_HEAD, verbose=0,
+                  callbacks=[tf.keras.callbacks.EarlyStopping(
+                      patience=4, restore_best_weights=True)])
+
+        # Fase 2: fine-tuning (últimos bloques del backbone)
+        bb = model.get_layer("efficientnetb0")
+        bb.trainable = True
+        for layer in bb.layers:
+            if not layer.name.startswith(("block6", "block7", "top")):
+                layer.trainable = False
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(LEARNING_RATE_FINE),
+            loss="binary_crossentropy", metrics=["accuracy"]
+        )
+        model.fit(train_ds, epochs=EPOCHS_FINE, verbose=0,
+                  callbacks=[tf.keras.callbacks.EarlyStopping(
+                      patience=4, restore_best_weights=True)])
+
+        # Evaluar
+        y_true, y_prob = [], []
+        for (imgs, poses), lbls in test_ds:
+            probs = model.predict([imgs, poses], verbose=0)
+            y_prob.extend(probs.flatten().tolist())
+            y_true.extend(lbls.numpy().flatten().tolist())
+
+        y_true = np.array(y_true)
+        y_prob = np.array(y_prob)
+        y_pred = (y_prob >= 0.5).astype(int)
+
+        acc = accuracy_score(y_true, y_pred)
+        f1  = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        auc = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else float('nan')
+
+        fold_metrics.append({"acc": acc, "f1": f1, "auc": auc})
+        print(f"    Accuracy: {acc:.4f} | F1: {f1:.4f} | AUC: {auc:.4f}")
+
+        tf.keras.backend.clear_session()
+
+    _report_and_plot(fold_metrics, "Hybrid CNN+Pose", out, k)
+    return fold_metrics
+
+
+# ─────────────────────────────────────────────────────────────
 # REPORTE Y GRÁFICA
 # ─────────────────────────────────────────────────────────────
 
@@ -375,7 +537,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="K-Fold Cross-Validation para detección de escoliosis"
     )
-    parser.add_argument("--model", choices=["pose", "cnn", "all"],
+    parser.add_argument("--model", choices=["pose", "cnn", "hybrid", "all"],
                         default="pose",
                         help="Modelo a evaluar (default: pose, más rápido)")
     parser.add_argument("--k", type=int, default=5,
@@ -391,3 +553,6 @@ if __name__ == "__main__":
 
     if args.model in ("cnn", "all"):
         kfold_cnn(args.dataset, args.output, k=args.k)
+
+    if args.model in ("hybrid", "all"):
+        kfold_hybrid(args.dataset, args.output, k=args.k)
