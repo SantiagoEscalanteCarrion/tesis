@@ -293,7 +293,8 @@ def plot_shap_barchart(model_path, features_cache_path, output_dir):
                 f"{v:.4f}", va="center", fontsize=9, fontweight="bold")
 
     ax.set_xlabel("Mean |SHAP value|", fontsize=11)
-    ax.set_title("Feature Importance — E2 Pose (RandomForest + SHAP)",
+    clf_name = type(pipe.named_steps["clf"]).__name__.replace("Classifier", "")
+    ax.set_title(f"Feature Importance — E2 Pose ({clf_name} + SHAP)",
                  fontsize=12, fontweight="bold")
     ax.grid(True, axis="x", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
