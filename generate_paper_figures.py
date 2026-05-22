@@ -327,7 +327,7 @@ if __name__ == "__main__":
 
     # Rutas de modelos guardados
     parser.add_argument("--cnn_model",  default=os.path.join(OUTPUT_DIR, "cnn",  "cnn_final.keras"))
-    parser.add_argument("--pose_model", default=os.path.join(OUTPUT_DIR, "pose", "pose_RandomForest.pkl"))
+    parser.add_argument("--pose_model", default=os.path.join(OUTPUT_DIR, "pose", "pose_xgboost.pkl"))
     parser.add_argument("--features",   default=os.path.join(OUTPUT_DIR, "feature_diagnosis", "orig_features_cache.pkl"))
 
     # Imágenes para Grad-CAM
