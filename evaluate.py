@@ -136,7 +136,7 @@ def evaluate_cnn_full(model_path, dataset_dir, output_dir):
     return evaluate_cnn(model, test_ds, output_dir)
 
 
-def evaluate_pose_full(model_path, features_path, output_dir):
+def evaluate_pose_full(model_path, features_path, dataset_dir, output_dir):
     from model_pose import split_data, evaluate_pose_classifiers
 
     pipeline = load_pose_model(model_path)
@@ -145,7 +145,8 @@ def evaluate_pose_full(model_path, features_path, output_dir):
     with open(features_path, "rb") as f:
         data = pickle.load(f)
     X, y = data["X"], data["y"]
-    _, _, X_test, _, _, y_test = split_data(X, y)
+    paths = data.get("paths", [None] * len(y))
+    _, _, X_test, _, _, y_test = split_data(X, y, paths, dataset_dir)
 
     return evaluate_pose_classifiers({model_name: pipeline}, X_test, y_test, output_dir)
 
@@ -236,7 +237,7 @@ if __name__ == "__main__":
 
         elif args.model == "pose":
             feats = args.pose_features or os.path.join(args.output, "pose", "pose_features.pkl")
-            evaluate_pose_full(args.model_path, feats, out)
+            evaluate_pose_full(args.model_path, feats, args.dataset, out)
 
         elif args.model == "hybrid":
             feats = args.pose_features or os.path.join(args.output, "pose", "pose_features.pkl")
