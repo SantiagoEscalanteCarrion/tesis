@@ -52,6 +52,15 @@ def _load_models() -> None:
     with open(os.path.join(OUTPUT_DIR, "hybrid", "pose_norm_stats.pkl"), "rb") as f:
         _m["e3_norm"] = pickle.load(f)
 
+    temp_path = os.path.join(OUTPUT_DIR, "hybrid", "e3_temperature.pkl")
+    if os.path.exists(temp_path):
+        with open(temp_path, "rb") as f:
+            _m["e3_T"] = pickle.load(f)["T"]
+        print(f"[webapp] Temperature scaling E3: T={_m['e3_T']:.4f}")
+    else:
+        _m["e3_T"] = 1.0
+        print("[webapp] Temperature scaling E3: no calibrado (T=1.0)")
+
     _m["lm"] = _get_landmarker()
     print("[webapp] Modelos listos.")
 
@@ -186,11 +195,16 @@ async def predict(file: UploadFile = File(...)):
     if feats is not None:
         norm       = _m["e3_norm"]
         feats_norm = ((feats - norm["mean"]) / norm["std"]).astype(np.float32)
-        prob_e3    = float(
+        raw_prob   = float(
             _m["e3"].predict(
                 [img_arr, np.expand_dims(feats_norm, 0)], verbose=0
             )[0, 0]
         )
+        # Temperature scaling: sigmoid(logit / T)
+        eps      = 1e-7
+        logit    = float(np.log(np.clip(raw_prob, eps, 1 - eps) /
+                                (1 - np.clip(raw_prob, eps, 1 - eps))))
+        prob_e3  = float(1 / (1 + np.exp(-logit / _m["e3_T"])))
         result["e3"] = {
             "probability": round(prob_e3, 4),
             "prediction":  "Scoliosis" if prob_e3 >= 0.5 else "Healthy",
