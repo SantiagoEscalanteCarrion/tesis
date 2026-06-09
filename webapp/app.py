@@ -55,8 +55,13 @@ def _load_models() -> None:
     temp_path = os.path.join(OUTPUT_DIR, "hybrid", "e3_temperature.pkl")
     if os.path.exists(temp_path):
         with open(temp_path, "rb") as f:
-            _m["e3_T"] = pickle.load(f)["T"]
-        print(f"[webapp] Temperature scaling E3: T={_m['e3_T']:.4f}")
+            T_loaded = pickle.load(f)["T"]
+        if T_loaded >= 1.0:
+            _m["e3_T"] = T_loaded
+            print(f"[webapp] Temperature scaling E3: T={_m['e3_T']:.4f}")
+        else:
+            _m["e3_T"] = 1.0
+            print(f"[webapp] Temperature scaling E3: T cargado={T_loaded:.4f} < 1 ignorado, usando T=1.0")
     else:
         _m["e3_T"] = 1.0
         print("[webapp] Temperature scaling E3: no calibrado (T=1.0)")

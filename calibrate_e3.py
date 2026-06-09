@@ -62,11 +62,16 @@ def calibrate(model_path, features_path, norm_stats_path, output_path):
 
     result = minimize_scalar(
         lambda T: _nll(T, logits, labels),
-        bounds=(0.05, 20.0),
+        bounds=(1.0, 20.0),   # T < 1 amplifica logits → peor para out-of-distribution
         method="bounded",
     )
     T_opt = float(result.x)
     print(f"T óptimo: {T_opt:.4f}  |  NLL calibrado: {_nll(T_opt, logits, labels):.4f}")
+
+    if abs(T_opt - 1.0) < 0.01:
+        print("AVISO: T ≈ 1.0 — el modelo ya está bien calibrado en el validation set.")
+        print("       El overconfidence observado es domain shift (fotos out-of-distribution).")
+        print("       Temperature Scaling no lo puede corregir desde el validation set.")
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "wb") as f:
