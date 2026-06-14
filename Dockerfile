@@ -1,12 +1,16 @@
 FROM python:3.10-slim
 
 # Dependencias de sistema requeridas por opencv-python y mediapipe
+# (libgles2/libegl1: requeridas por la Tasks API de mediapipe >=0.10.14
+# para PoseLandmarker.create_from_options, incluso sin GPU)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender1 \
+    libgles2 \
+    libegl1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
