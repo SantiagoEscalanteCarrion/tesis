@@ -1,0 +1,23 @@
+REPORTE DE SEPARABILIDAD DEL DATASET
+==================================================
+
+Total muestras: 323
+scoliosis_no:  203
+scoliosis_yes: 120
+
+Cohen's d por feature:
+  shoulder_height_diff           d=1.138
+  hip_height_diff                d=0.744
+  elbow_height_diff              d=0.081
+  wrist_height_diff              d=0.103
+  shoulder_width                 d=0.789
+  hip_width                      d=0.002
+  shoulder_asymmetry_ratio       d=0.495
+  hip_asymmetry_ratio            d=0.573
+  trunk_tilt_x                   d=0.484
+  trunk_tilt_angle               d=0.132
+  spine_deviation                d=0.003
+  body_height_proxy              d=0.074
+
+Decision Stump (1 feature, 1 corte): 0.9628
+Logistic Regression (C=0.001):        0.6285

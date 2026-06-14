@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scoliosis Detection Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f4f8;
+      color: #1a202c;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1e3a5f;
+      color: white;
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
+    header svg { flex-shrink: 0; }
+    header h1  { font-size: 1.35rem; font-weight: 700; letter-spacing: .3px; }
+    header p   { font-size: .8rem; opacity: .75; margin-top: 2px; }
+
+    /* ── Main layout ── */
+    main {
+      max-width: 1100px;
+      margin: 32px auto;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    /* ── Card base ── */
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .card h2 {
+      font-size: .9rem;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: #718096;
+      margin-bottom: 16px;
+    }
+
+    /* ── Upload area ── */
+    #drop-zone {
+      border: 2px dashed #cbd5e0;
+      border-radius: 10px;
+      padding: 32px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    #drop-zone:hover, #drop-zone.dragover {
+      border-color: #3182ce;
+      background: #ebf8ff;
+    }
+    #drop-zone svg { color: #a0aec0; margin-bottom: 10px; }
+    #drop-zone p   { font-size: .9rem; color: #718096; }
+    #drop-zone span { color: #3182ce; font-weight: 600; }
+
+    #file-input { display: none; }
+
+    #preview-wrap {
+      margin-top: 16px;
+      display: none;
+      position: relative;
+    }
+    #preview-img {
+      width: 100%;
+      border-radius: 8px;
+      display: block;
+      max-height: 320px;
+      object-fit: contain;
+      background: #f7fafc;
+    }
+
+    #btn-predict {
+      margin-top: 16px;
+      width: 100%;
+      padding: 12px;
+      background: #1e3a5f;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s;
+      display: none;
+    }
+    #btn-predict:hover   { background: #2a4a7f; }
+    #btn-predict:disabled {
+      background: #a0aec0;
+      cursor: not-allowed;
+    }
+
+    /* ── Results panel ── */
+    #results-panel { display: flex; flex-direction: column; gap: 18px; }
+
+    /* Consensus banner */
+    #consensus-card {
+      border-radius: 12px;
+      padding: 20px 24px;
+      display: none;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    #consensus-card.scoliosis { background: #fff5f5; border: 2px solid #fc8181; }
+    #consensus-card.healthy   { background: #f0fff4; border: 2px solid #68d391; }
+    #consensus-icon { font-size: 2.2rem; }
+    #consensus-label { font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; color: #718096; }
+    #consensus-value { font-size: 1.6rem; font-weight: 800; }
+    #consensus-card.scoliosis #consensus-value { color: #c53030; }
+    #consensus-card.healthy   #consensus-value { color: #276749; }
+    #consensus-note { font-size: .78rem; color: #718096; margin-top: 2px; }
+
+    /* Model cards grid */
+    #model-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 14px;
+      display: none;
+    }
+
+    .model-card {
+      background: white;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      border-top: 4px solid #e2e8f0;
+    }
+    .model-card.scoliosis { border-top-color: #fc8181; }
+    .model-card.healthy   { border-top-color: #68d391; }
+
+    .model-card .model-name {
+      font-size: .75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: #4a5568;
+      margin-bottom: 10px;
+    }
+    .model-card .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: .78rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .model-card.scoliosis .badge { background: #fed7d7; color: #c53030; }
+    .model-card.healthy   .badge { background: #c6f6d5; color: #276749; }
+    .model-card.na        .badge { background: #e2e8f0; color: #718096; }
+
+    .prob-bar-wrap { margin-top: 4px; }
+    .prob-label { font-size: .72rem; color: #718096; margin-bottom: 4px; }
+    .prob-bar {
+      height: 7px;
+      background: #e2e8f0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .prob-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width .6s ease;
+    }
+    .model-card.scoliosis .prob-fill { background: #fc8181; }
+    .model-card.healthy   .prob-fill { background: #68d391; }
+    .model-card.na        .prob-fill { background: #cbd5e0; }
+
+    .prob-value {
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin-top: 6px;
+      color: #2d3748;
+    }
+
+    /* Grad-CAM section */
+    #gradcam-card { display: none; }
+    #gradcam-img {
+      width: 100%;
+      border-radius: 8px;
+      display: block;
+      max-height: 300px;
+      object-fit: contain;
+      background: #1a202c;
+    }
+    #gradcam-note {
+      font-size: .75rem;
+      color: #718096;
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+
+    /* Spinner */
+    #spinner {
+      display: none;
+      text-align: center;
+      padding: 40px;
+    }
+    .spin {
+      width: 44px; height: 44px;
+      border: 4px solid #e2e8f0;
+      border-top-color: #1e3a5f;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #spinner p { color: #718096; font-size: .9rem; }
+
+    /* Error */
+    #error-msg {
+      display: none;
+      background: #fff5f5;
+      border: 1px solid #fc8181;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #c53030;
+      font-size: .88rem;
+    }
+
+    /* Placeholder */
+    #placeholder {
+      text-align: center;
+      padding: 60px 20px;
+      color: #a0aec0;
+    }
+    #placeholder svg { margin-bottom: 12px; }
+    #placeholder p { font-size: .9rem; }
+
+    @media (max-width: 780px) {
+      main { grid-template-columns: 1fr; }
+      #model-cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+    <path d="M12 2a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
+    <path d="M12 14v8M8 18h8"/>
+  </svg>
+  <div>
+    <h1>Scoliosis Detection Demo</h1>
+    <p>E1 CNN · E2 XGBoost · E3 Hybrid — Tesis de Grado</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- Left: upload -->
+  <div class="card">
+    <h2>Imagen de entrada</h2>
+
+    <div id="drop-zone">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.5">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <p>Arrastra una imagen aquí<br>o <span>haz clic para seleccionar</span></p>
+    </div>
+    <input type="file" id="file-input" accept="image/*" />
+
+    <div id="preview-wrap">
+      <img id="preview-img" alt="Vista previa" />
+    </div>
+
+    <button id="btn-predict">Analizar imagen</button>
+  </div>
+
+  <!-- Right: results -->
+  <div id="results-panel">
+
+    <!-- Placeholder -->
+    <div id="placeholder">
+      <svg width="56" height="56" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.2">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <path d="M9 9h6M9 12h6M9 15h4"/>
+      </svg>
+      <p>Sube una imagen de la espalda<br>para obtener el diagnóstico</p>
+    </div>
+
+    <!-- Spinner -->
+    <div id="spinner">
+      <div class="spin"></div>
+      <p>Analizando imagen…</p>
+    </div>
+
+    <!-- Error -->
+    <div id="error-msg"></div>
+
+    <!-- Consensus -->
+    <div id="consensus-card">
+      <div id="consensus-icon"></div>
+      <div>
+        <div id="consensus-label">Diagnóstico por consenso</div>
+        <div id="consensus-value"></div>
+        <div id="consensus-note">Mayoría simple entre E1, E2 y E3</div>
+      </div>
+    </div>
+
+    <!-- Three model cards -->
+    <div id="model-cards">
+      <div class="model-card" id="card-e1">
+        <div class="model-name">E1 · CNN</div>
+        <div class="badge" id="badge-e1">—</div>
+        <div class="prob-bar-wrap">
+          <div class="prob-label">P(Escoliosis)</div>
+          <div class="prob-bar"><div class="prob-fill" id="fill-e1" style="width:0%"></div></div>
+          <div class="prob-value" id="prob-e1">—</div>
+        </div>
+      </div>
+      <div class="model-card" id="card-e2">
+        <div class="model-name">E2 · XGBoost</div>
+        <div class="badge" id="badge-e2">—</div>
+        <div class="prob-bar-wrap">
+          <div class="prob-label">P(Escoliosis)</div>
+          <div class="prob-bar"><div class="prob-fill" id="fill-e2" style="width:0%"></div></div>
+          <div class="prob-value" id="prob-e2">—</div>
+        </div>
+      </div>
+      <div class="model-card" id="card-e3">
+        <div class="model-name">E3 · Hybrid</div>
+        <div class="badge" id="badge-e3">—</div>
+        <div class="prob-bar-wrap">
+          <div class="prob-label">P(Escoliosis)</div>
+          <div class="prob-bar"><div class="prob-fill" id="fill-e3" style="width:0%"></div></div>
+          <div class="prob-value" id="prob-e3">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Grad-CAM -->
+    <div class="card" id="gradcam-card">
+      <h2>Grad-CAM — E1 CNN (zonas de atención)</h2>
+      <img id="gradcam-img" alt="Grad-CAM overlay" />
+      <p id="gradcam-note">
+        El mapa de calor muestra las regiones de la imagen que más influyeron
+        en la predicción del modelo E1. Rojo/naranja = máxima activación · Azul/cian = baja activación.
+      </p>
+    </div>
+
+  </div>
+</main>
+
+<script>
+  const dropZone   = document.getElementById('drop-zone');
+  const fileInput  = document.getElementById('file-input');
+  const previewWrap = document.getElementById('preview-wrap');
+  const previewImg = document.getElementById('preview-img');
+  const btnPredict = document.getElementById('btn-predict');
+
+  // ── Upload interaction ────────────────────────────────────
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+
+  function loadFile(file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      previewImg.src = e.target.result;
+      previewWrap.style.display = 'block';
+      btnPredict.style.display  = 'block';
+    };
+    reader.readAsDataURL(file);
+    resetResults();
+  }
+
+  // ── Predict ───────────────────────────────────────────────
+  btnPredict.addEventListener('click', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    setLoading(true);
+
+    const form = new FormData();
+    form.append('file', file);
+
+    try {
+      const res  = await fetch('/predict', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Error en el servidor');
+      renderResults(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  // ── Render ────────────────────────────────────────────────
+  function renderResults(data) {
+    hide('placeholder');
+    hide('error-msg');
+
+    // Consensus
+    const consensus = data.consensus;
+    const cc = document.getElementById('consensus-card');
+    cc.className = consensus === 'Scoliosis' ? 'scoliosis' : 'healthy';
+    cc.style.display = 'flex';
+    document.getElementById('consensus-icon').textContent =
+      consensus === 'Scoliosis' ? '⚠️' : '✅';
+    document.getElementById('consensus-value').textContent =
+      consensus === 'Scoliosis' ? 'Escoliosis detectada' : 'Sin escoliosis';
+
+    // Model cards
+    document.getElementById('model-cards').style.display = 'grid';
+    renderCard('e1', data.e1);
+    renderCard('e2', data.e2);
+    renderCard('e3', data.e3);
+
+    // Grad-CAM
+    if (data.e1 && data.e1.gradcam_b64) {
+      document.getElementById('gradcam-img').src = 'data:image/png;base64,' + data.e1.gradcam_b64;
+      document.getElementById('gradcam-card').style.display = 'block';
+    }
+  }
+
+  function renderCard(id, d) {
+    if (!d) return;
+    const card  = document.getElementById('card-' + id);
+    const badge = document.getElementById('badge-' + id);
+    const fill  = document.getElementById('fill-' + id);
+    const prob  = document.getElementById('prob-' + id);
+
+    const isNA = d.prediction === 'N/A' || d.probability === null;
+
+    if (isNA) {
+      card.className  = 'model-card na';
+      badge.textContent = 'Sin pose';
+      fill.style.width  = '0%';
+      prob.textContent  = 'N/A';
+      return;
+    }
+
+    const isScoliosis = d.prediction === 'Scoliosis';
+    card.className  = 'model-card ' + (isScoliosis ? 'scoliosis' : 'healthy');
+    badge.textContent = isScoliosis ? 'Escoliosis' : 'Sano';
+    fill.style.width  = (d.probability * 100).toFixed(1) + '%';
+    prob.textContent  = (d.probability * 100).toFixed(1) + '%';
+  }
+
+  // ── Helpers ───────────────────────────────────────────────
+  function setLoading(on) {
+    btnPredict.disabled = on;
+    btnPredict.textContent = on ? 'Analizando…' : 'Analizar imagen';
+    document.getElementById('spinner').style.display = on ? 'block' : 'none';
+    if (on) {
+      hide('placeholder');
+      hide('consensus-card');
+      hide('model-cards');
+      hide('gradcam-card');
+    }
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error-msg');
+    el.textContent = '❌ ' + msg;
+    el.style.display = 'block';
+    show('placeholder');
+  }
+
+  function resetResults() {
+    hide('consensus-card');
+    hide('model-cards');
+    hide('gradcam-card');
+    hide('error-msg');
+    show('placeholder');
+  }
+
+  function hide(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+  function show(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = '';
+  }
+</script>
+
+</body>
+</html>
