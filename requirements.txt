@@ -3,6 +3,7 @@
 # (Keras 3 serializes layer configs with fields like quantization_config
 # that older Keras/TF versions cannot deserialize).
 tensorflow==2.21.0
+keras==3.13.2
 scikit-learn>=1.3.0
 xgboost>=2.0.0
 

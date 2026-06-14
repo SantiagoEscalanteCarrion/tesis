@@ -35,20 +35,16 @@ _m: dict = {}
 
 
 def _load_models() -> None:
-    import tensorflow as tf
+    from model_io import load_model_compat
     from model_pose import _get_landmarker
 
     print("[webapp] Cargando modelos...")
 
-    _m["e1"] = tf.keras.models.load_model(
-        os.path.join(OUTPUT_DIR, "cnn", "cnn_final.keras")
-    )
+    _m["e1"] = load_model_compat(os.path.join(OUTPUT_DIR, "cnn", "cnn_final.keras"))
     with open(os.path.join(OUTPUT_DIR, "pose", "pose_xgboost.pkl"), "rb") as f:
         _m["e2"] = pickle.load(f)
 
-    _m["e3"] = tf.keras.models.load_model(
-        os.path.join(OUTPUT_DIR, "hybrid", "hybrid_final.keras")
-    )
+    _m["e3"] = load_model_compat(os.path.join(OUTPUT_DIR, "hybrid", "hybrid_final.keras"))
     with open(os.path.join(OUTPUT_DIR, "hybrid", "pose_norm_stats.pkl"), "rb") as f:
         _m["e3_norm"] = pickle.load(f)
 
