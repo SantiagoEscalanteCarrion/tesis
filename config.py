@@ -9,8 +9,10 @@ import os
 # RUTAS
 # ─────────────────────────────────────────────
 
-# Ruta raíz del proyecto en tu máquina Windows
-BASE_DIR = r"C:/Users/SANTIAGO/Documents/GitHub/tesis"
+# Ruta raíz del proyecto. Por defecto, la carpeta que contiene este archivo
+# (funciona igual en Windows/Linux/Docker). Se puede sobreescribir con la
+# variable de entorno TESIS_BASE_DIR si se necesita otra ubicación.
+BASE_DIR = os.environ.get("TESIS_BASE_DIR", os.path.dirname(os.path.abspath(__file__)))
 
 # Dataset original (pre-augmentation)
 DATASET_DIR = os.path.join(BASE_DIR, "dataset")

@@ -1,0 +1,8 @@
+.git/
+dataset/
+dataset_augmented/
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+*.md
