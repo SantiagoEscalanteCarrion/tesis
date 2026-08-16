@@ -1,0 +1,20 @@
+==============================================================
+Quantitative Grad-CAM Evaluation — E1 EfficientNetB0 CNN
+==============================================================
+  Test set images:      49
+  Pose detected:        49
+  Pose failed (skipped): 0
+  Threshold:            top-20% activation
+  ROI:                  convex hull (shoulders + hips)
+
+  Global (n=49)
+    IoU (top-20%): 0.229 ± 0.150  [min=0.000, max=0.460]
+    Pointing game:  22.4%  (11/49 hits)
+
+  Scoliosis (1) (n=18)
+    IoU (top-20%): 0.081 ± 0.055  [min=0.000, max=0.159]
+    Pointing game:  0.0%  (0/18 hits)
+
+  Healthy (0) (n=31)
+    IoU (top-20%): 0.315 ± 0.117  [min=0.156, max=0.460]
+    Pointing game:  35.5%  (11/31 hits)
