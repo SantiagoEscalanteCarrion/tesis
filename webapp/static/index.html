@@ -907,7 +907,8 @@
     const probs = [data.e1, data.e2, data.e3]
       .filter(m => m && m.probability !== null)
       .map(m => m.probability);
-    const displayProb = probs.length ? probs.reduce((a,b)=>a+b)/probs.length : 0.5;
+    const rawProb     = probs.length ? probs.reduce((a,b)=>a+b)/probs.length : 0.5;
+    const displayProb = Math.min(0.97, Math.max(0.03, rawProb));
 
     setGauge(displayProb, isScoliosis);
     document.getElementById('consensus-verdict').textContent =
@@ -956,8 +957,9 @@
     const isScoliosis = d.prediction === 'Scoliosis';
     card.className      = 'model-card ' + (isScoliosis ? 'scoliosis' : 'healthy');
     badge.textContent   = isScoliosis ? 'Escoliosis' : 'Sano';
-    fill.style.width    = (d.probability * 100).toFixed(1) + '%';
-    if (prob) prob.textContent = (d.probability * 100).toFixed(1) + '%';
+    const pct = Math.min(97, Math.max(3, d.probability * 100));
+    fill.style.width    = pct.toFixed(1) + '%';
+    if (prob) prob.textContent = pct.toFixed(1) + '%';
   }
 
   // ── Helpers ───────────────────────────────────────────────────
