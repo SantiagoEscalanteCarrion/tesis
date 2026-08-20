@@ -1,378 +1,791 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Scoliosis Detection Demo</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Detección de Escoliosis con IA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f0f4f8;
-      color: #1a202c;
-      min-height: 100vh;
+    :root {
+      --c-primary:        #0F6E67;
+      --c-dark:           #0A2E2B;
+      --c-accent:         #FF6F3C;
+      --c-bg:             #EAF6F4;
+      --c-white:          #FFFFFF;
+      --c-text:           #1A2E2B;
+      --c-muted:          #5A7A77;
+      --c-border:         #C5DFDB;
+      --c-card-shadow:    0 2px 12px rgba(10,46,43,.10);
+      --c-scoliosis:      #C53030;
+      --c-scoliosis-bg:   #FFF5F5;
+      --c-scoliosis-line: #FC8181;
+      --c-healthy:        #0F6E67;
+      --c-healthy-bg:     #EAF6F4;
+      --c-healthy-line:   #48BB78;
     }
 
-    /* ── Header ── */
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--c-bg);
+      color: var(--c-text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Mode toggle (simple / técnico) ─────────────────────── */
+    .tech-mode .simple-only { display: none !important; }
+    .tech-mode .tech-only   { display: inline !important; }
+    .simple-only { }
+    .tech-only   { display: none; }
+
+    /* ── Header ─────────────────────────────────────────────── */
     header {
-      background: #1e3a5f;
+      background: var(--c-dark);
       color: white;
-      padding: 18px 32px;
+      padding: 16px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      box-shadow: 0 3px 12px rgba(0,0,0,.3);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-brand {
       display: flex;
       align-items: center;
       gap: 14px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.25);
     }
-    header svg { flex-shrink: 0; }
-    header h1  { font-size: 1.35rem; font-weight: 700; letter-spacing: .3px; }
-    header p   { font-size: .8rem; opacity: .75; margin-top: 2px; }
+    .header-brand .icon {
+      width: 42px; height: 42px;
+      background: var(--c-primary);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .header-brand h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: .2px;
+      line-height: 1.2;
+    }
+    .header-brand p {
+      font-size: .75rem;
+      opacity: .7;
+      margin-top: 2px;
+      font-weight: 400;
+    }
 
-    /* ── Main layout ── */
+    .mode-toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .8rem;
+      opacity: .8;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .toggle-track {
+      width: 40px; height: 22px;
+      background: rgba(255,255,255,.2);
+      border-radius: 11px;
+      position: relative;
+      transition: background .25s;
+      flex-shrink: 0;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      left: 3px; top: 3px;
+      width: 16px; height: 16px;
+      background: white;
+      border-radius: 50%;
+      transition: left .25s;
+    }
+    #tech-toggle { display: none; }
+    #tech-toggle:checked + .mode-toggle-wrap .toggle-track { background: var(--c-accent); }
+    #tech-toggle:checked + .mode-toggle-wrap .toggle-track::after { left: 21px; }
+
+    /* ── Stepper ─────────────────────────────────────────────── */
+    .stepper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 18px 24px 14px;
+      background: var(--c-white);
+      border-bottom: 1px solid var(--c-border);
+    }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-num {
+      width: 32px; height: 32px;
+      background: var(--c-primary);
+      color: white;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .85rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .step-label {
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--c-text);
+    }
+    .step-line {
+      flex: 1;
+      max-width: 60px;
+      height: 2px;
+      background: var(--c-border);
+      margin: 0 10px;
+    }
+
+    /* ── Main layout ─────────────────────────────────────────── */
     main {
+      flex: 1;
       max-width: 1100px;
-      margin: 32px auto;
-      padding: 0 24px;
+      width: 100%;
+      margin: 28px auto;
+      padding: 0 20px;
       display: grid;
-      grid-template-columns: 380px 1fr;
-      gap: 24px;
+      grid-template-columns: 370px 1fr;
+      gap: 22px;
       align-items: start;
     }
 
-    /* ── Card base ── */
+    /* ── Cards ───────────────────────────────────────────────── */
     .card {
-      background: white;
-      border-radius: 12px;
-      padding: 24px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      background: var(--c-white);
+      border-radius: 14px;
+      padding: 22px;
+      box-shadow: var(--c-card-shadow);
     }
-    .card h2 {
-      font-size: .9rem;
+    .card-title {
+      font-size: .72rem;
       text-transform: uppercase;
-      letter-spacing: .6px;
-      color: #718096;
-      margin-bottom: 16px;
+      letter-spacing: .7px;
+      font-weight: 700;
+      color: var(--c-muted);
+      margin-bottom: 14px;
     }
 
-    /* ── Upload area ── */
+    /* ── Upload ──────────────────────────────────────────────── */
     #drop-zone {
-      border: 2px dashed #cbd5e0;
+      border: 2px dashed var(--c-border);
       border-radius: 10px;
-      padding: 32px 20px;
+      padding: 28px 16px;
       text-align: center;
       cursor: pointer;
       transition: border-color .2s, background .2s;
     }
     #drop-zone:hover, #drop-zone.dragover {
-      border-color: #3182ce;
-      background: #ebf8ff;
+      border-color: var(--c-primary);
+      background: #f0faf9;
     }
-    #drop-zone svg { color: #a0aec0; margin-bottom: 10px; }
-    #drop-zone p   { font-size: .9rem; color: #718096; }
-    #drop-zone span { color: #3182ce; font-weight: 600; }
-
+    #drop-zone .dz-icon { color: var(--c-border); margin-bottom: 10px; }
+    #drop-zone .dz-text { font-size: .88rem; color: var(--c-muted); line-height: 1.5; }
+    #drop-zone .dz-link { color: var(--c-primary); font-weight: 600; }
     #file-input { display: none; }
 
-    #preview-wrap {
-      margin-top: 16px;
-      display: none;
-      position: relative;
-    }
-    #preview-img {
-      width: 100%;
-      border-radius: 8px;
-      display: block;
-      max-height: 320px;
-      object-fit: contain;
-      background: #f7fafc;
-    }
-
-    #btn-predict {
-      margin-top: 16px;
-      width: 100%;
-      padding: 12px;
-      background: #1e3a5f;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background .2s;
-      display: none;
-    }
-    #btn-predict:hover   { background: #2a4a7f; }
-    #btn-predict:disabled {
-      background: #a0aec0;
-      cursor: not-allowed;
-    }
-
-    /* ── Results panel ── */
-    #results-panel { display: flex; flex-direction: column; gap: 18px; }
-
-    /* Consensus banner */
-    #consensus-card {
-      border-radius: 12px;
-      padding: 20px 24px;
-      display: none;
-      align-items: center;
-      gap: 16px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
-    }
-    #consensus-card.scoliosis { background: #fff5f5; border: 2px solid #fc8181; }
-    #consensus-card.healthy   { background: #f0fff4; border: 2px solid #68d391; }
-    #consensus-icon { font-size: 2.2rem; }
-    #consensus-label { font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; color: #718096; }
-    #consensus-value { font-size: 1.6rem; font-weight: 800; }
-    #consensus-card.scoliosis #consensus-value { color: #c53030; }
-    #consensus-card.healthy   #consensus-value { color: #276749; }
-    #consensus-note { font-size: .78rem; color: #718096; margin-top: 2px; }
-
-    /* Model cards grid */
-    #model-cards {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 14px;
-      display: none;
-    }
-
-    .model-card {
-      background: white;
-      border-radius: 10px;
-      padding: 16px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
-      border-top: 4px solid #e2e8f0;
-    }
-    .model-card.scoliosis { border-top-color: #fc8181; }
-    .model-card.healthy   { border-top-color: #68d391; }
-
-    .model-card .model-name {
-      font-size: .75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      color: #4a5568;
-      margin-bottom: 10px;
-    }
-    .model-card .badge {
-      display: inline-block;
-      padding: 3px 10px;
-      border-radius: 20px;
-      font-size: .78rem;
-      font-weight: 700;
-      margin-bottom: 12px;
-    }
-    .model-card.scoliosis .badge { background: #fed7d7; color: #c53030; }
-    .model-card.healthy   .badge { background: #c6f6d5; color: #276749; }
-    .model-card.na        .badge { background: #e2e8f0; color: #718096; }
-
-    .prob-bar-wrap { margin-top: 4px; }
-    .prob-label { font-size: .72rem; color: #718096; margin-bottom: 4px; }
-    .prob-bar {
-      height: 7px;
-      background: #e2e8f0;
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    .prob-fill {
-      height: 100%;
-      border-radius: 4px;
-      transition: width .6s ease;
-    }
-    .model-card.scoliosis .prob-fill { background: #fc8181; }
-    .model-card.healthy   .prob-fill { background: #68d391; }
-    .model-card.na        .prob-fill { background: #cbd5e0; }
-
-    .prob-value {
-      font-size: 1.15rem;
-      font-weight: 800;
-      margin-top: 6px;
-      color: #2d3748;
-    }
-
-    /* Grad-CAM section */
-    #gradcam-card { display: none; }
-    #gradcam-img {
+    #preview-wrap { margin-top: 14px; display: none; }
+    #preview-canvas {
       width: 100%;
       border-radius: 8px;
       display: block;
       max-height: 300px;
       object-fit: contain;
-      background: #1a202c;
+      background: #f7f7f7;
     }
-    #gradcam-note {
-      font-size: .75rem;
-      color: #718096;
-      margin-top: 8px;
+    /* Hidden image for reading pixels */
+    #preview-img { display: none; }
+
+    #btn-predict {
+      margin-top: 16px;
+      width: 100%;
+      padding: 14px;
+      background: var(--c-accent);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-family: 'Inter', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .2s, transform .1s;
+      display: none;
+      letter-spacing: .2px;
+    }
+    #btn-predict:hover   { background: #e85d2a; transform: translateY(-1px); }
+    #btn-predict:active  { transform: translateY(0); }
+    #btn-predict:disabled { background: #a8c5c2; cursor: not-allowed; transform: none; }
+
+    /* ── Robustness slider ───────────────────────────────────── */
+    #noise-section {
+      display: none;
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid var(--c-border);
+    }
+    .noise-label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 8px;
+    }
+    .noise-title {
+      font-size: .8rem;
+      font-weight: 700;
+      color: var(--c-text);
+    }
+    .noise-emoji {
+      font-size: 1.1rem;
+    }
+    #noise-slider {
+      width: 100%;
+      accent-color: var(--c-accent);
+      cursor: pointer;
+      height: 6px;
+    }
+    .noise-ticks {
+      display: flex;
+      justify-content: space-between;
+      font-size: .68rem;
+      color: var(--c-muted);
+      margin-top: 4px;
+    }
+    #noise-warning {
+      display: none;
+      margin-top: 10px;
+      background: #FFF3E0;
+      border-left: 3px solid var(--c-accent);
+      padding: 8px 12px;
+      border-radius: 0 6px 6px 0;
+      font-size: .78rem;
+      color: #7A4100;
       line-height: 1.5;
     }
 
-    /* Spinner */
-    #spinner {
-      display: none;
+    /* ── Results panel ───────────────────────────────────────── */
+    #results-panel { display: flex; flex-direction: column; gap: 16px; }
+
+    /* Placeholder */
+    #placeholder {
       text-align: center;
-      padding: 40px;
+      padding: 52px 20px;
+      color: var(--c-border);
     }
+    #placeholder p {
+      font-size: .9rem;
+      color: var(--c-muted);
+      margin-top: 12px;
+      line-height: 1.6;
+    }
+
+    /* Spinner */
+    #spinner { display: none; text-align: center; padding: 36px; }
     .spin {
-      width: 44px; height: 44px;
-      border: 4px solid #e2e8f0;
-      border-top-color: #1e3a5f;
+      width: 48px; height: 48px;
+      border: 4px solid var(--c-border);
+      border-top-color: var(--c-primary);
       border-radius: 50%;
       animation: spin .8s linear infinite;
       margin: 0 auto 12px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    #spinner p { color: #718096; font-size: .9rem; }
+    #spinner p { color: var(--c-muted); font-size: .9rem; }
 
     /* Error */
     #error-msg {
       display: none;
-      background: #fff5f5;
-      border: 1px solid #fc8181;
-      border-radius: 8px;
-      padding: 12px 16px;
-      color: #c53030;
+      background: #FFF5F5;
+      border: 1px solid var(--c-scoliosis-line);
+      border-radius: 10px;
+      padding: 14px 18px;
+      color: var(--c-scoliosis);
       font-size: .88rem;
     }
 
-    /* Placeholder */
-    #placeholder {
-      text-align: center;
-      padding: 60px 20px;
-      color: #a0aec0;
+    /* ── Consensus gauge ─────────────────────────────────────── */
+    #consensus-card {
+      display: none;
+      border-radius: 14px;
+      padding: 22px 24px;
+      box-shadow: var(--c-card-shadow);
     }
-    #placeholder svg { margin-bottom: 12px; }
-    #placeholder p { font-size: .9rem; }
+    #consensus-card.healthy   { background: var(--c-healthy-bg);   border: 2px solid var(--c-healthy-line); }
+    #consensus-card.scoliosis { background: var(--c-scoliosis-bg); border: 2px solid var(--c-scoliosis-line); }
 
-    @media (max-width: 780px) {
-      main { grid-template-columns: 1fr; }
-      #model-cards { grid-template-columns: 1fr; }
+    .consensus-inner {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    /* SVG gauge */
+    .gauge-wrap { flex-shrink: 0; }
+    #gauge-svg { overflow: visible; }
+    #gauge-bg   { stroke: #E2EBE9; }
+    #gauge-fill { stroke: var(--c-primary); transition: stroke-dashoffset .6s ease, stroke .4s; }
+    #gauge-label-pct {
+      font-family: 'Inter', sans-serif;
+      font-weight: 700;
+      font-size: 16px;
+      fill: var(--c-text);
+    }
+    #gauge-label-txt {
+      font-family: 'Inter', sans-serif;
+      font-size: 8px;
+      fill: var(--c-muted);
+    }
+
+    .consensus-text { flex: 1; min-width: 0; }
+    #consensus-verdict {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 1.5rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    #consensus-card.healthy   #consensus-verdict { color: var(--c-healthy); }
+    #consensus-card.scoliosis #consensus-verdict { color: var(--c-scoliosis); }
+
+    #consensus-sublabel {
+      font-size: .78rem;
+      color: var(--c-muted);
+      margin-top: 4px;
+    }
+    #consensus-note {
+      font-size: .75rem;
+      color: var(--c-muted);
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--c-border);
+    }
+
+    /* ── Model cards ─────────────────────────────────────────── */
+    #model-cards {
+      display: none;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+    .model-card {
+      background: var(--c-white);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: var(--c-card-shadow);
+      border-top: 4px solid var(--c-border);
+    }
+    .model-card.healthy   { border-top-color: var(--c-healthy-line); }
+    .model-card.scoliosis { border-top-color: var(--c-scoliosis-line); }
+    .model-card.na        { border-top-color: #CBD5E0; }
+
+    .mc-name {
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--c-muted);
+      margin-bottom: 8px;
+    }
+    .mc-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: .75rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .model-card.healthy   .mc-badge { background: #C6F6D5; color: #276749; }
+    .model-card.scoliosis .mc-badge { background: #FED7D7; color: var(--c-scoliosis); }
+    .model-card.na        .mc-badge { background: #E2E8F0; color: #718096; }
+
+    .mc-bar-wrap { }
+    .mc-bar-label { font-size: .68rem; color: var(--c-muted); margin-bottom: 3px; }
+    .mc-bar { height: 6px; background: #E2E8F0; border-radius: 4px; overflow: hidden; }
+    .mc-fill { height: 100%; border-radius: 4px; transition: width .6s ease; }
+    .model-card.healthy   .mc-fill { background: var(--c-healthy-line); }
+    .model-card.scoliosis .mc-fill { background: var(--c-scoliosis-line); }
+    .model-card.na        .mc-fill { background: #CBD5E0; }
+
+    .mc-value {
+      font-size: 1.05rem;
+      font-weight: 800;
+      margin-top: 5px;
+      color: var(--c-text);
+    }
+    .mc-value.tech-only { display: none; }
+
+    /* ── Grad-CAM card ───────────────────────────────────────── */
+    #gradcam-card { display: none; }
+    #gradcam-img {
+      width: 100%;
+      border-radius: 8px;
+      display: block;
+      max-height: 280px;
+      object-fit: contain;
+      background: #1A2E2B;
+    }
+    .gradcam-legend {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: .72rem;
+      color: var(--c-muted);
+    }
+    .legend-dot {
+      width: 12px; height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    #gradcam-note {
+      font-size: .78rem;
+      color: var(--c-muted);
+      margin-top: 10px;
+      line-height: 1.6;
+    }
+
+    /* ── Footer ──────────────────────────────────────────────── */
+    footer {
+      background: var(--c-dark);
+      color: rgba(255,255,255,.75);
+      padding: 20px 28px;
+      margin-top: auto;
+    }
+    .footer-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .footer-disclaimer {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      background: rgba(255,111,60,.12);
+      border: 1px solid rgba(255,111,60,.35);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: .8rem;
+      line-height: 1.6;
+    }
+    .disclaimer-icon { font-size: 1.2rem; flex-shrink: 0; }
+    .footer-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: .72rem;
+      opacity: .6;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    /* ── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 820px) {
+      main {
+        grid-template-columns: 1fr;
+        margin: 16px auto;
+      }
+      #model-cards {
+        grid-template-columns: 1fr;
+      }
+      .stepper { padding: 12px 16px; }
+      .step-label { font-size: .75rem; }
+      .step-line { max-width: 30px; }
+      .header-brand h1 { font-size: 1rem; }
+    }
+    @media (max-width: 480px) {
+      header { flex-direction: column; align-items: flex-start; gap: 10px; }
+      .consensus-inner { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
 <body>
 
+<!-- ── Header ────────────────────────────────────────────────── -->
 <header>
-  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
-    <path d="M12 2a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
-    <path d="M12 14v8M8 18h8"/>
-  </svg>
-  <div>
-    <h1>Scoliosis Detection Demo</h1>
-    <p>E1 CNN · E2 XGBoost · E3 Hybrid — Tesis de Grado</p>
+  <div class="header-brand">
+    <div class="icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round">
+        <path d="M12 2c0 0 0 6 0 10"/>
+        <path d="M9 6c-1.5.5-3 2-3 4s1.5 3.5 3 4"/>
+        <path d="M15 6c1.5.5 3 2 3 4s-1.5 3.5-3 4"/>
+        <path d="M12 12v10"/>
+        <path d="M9 20h6"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Detección de escoliosis con IA</h1>
+      <p>Desde una foto de la espalda · Proyecto de investigación</p>
+    </div>
   </div>
+
+  <label for="tech-toggle" style="cursor:pointer;">
+    <input type="checkbox" id="tech-toggle"/>
+    <span class="mode-toggle-wrap">
+      <span class="toggle-track"></span>
+      <span>Modo técnico</span>
+    </span>
+  </label>
 </header>
 
+<!-- ── Stepper ───────────────────────────────────────────────── -->
+<div class="stepper">
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-label">Sube tu foto</div>
+  </div>
+  <div class="step-line"></div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-label">La IA la analiza</div>
+  </div>
+  <div class="step-line"></div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-label">Ve el resultado</div>
+  </div>
+</div>
+
+<!-- ── Main ──────────────────────────────────────────────────── -->
 <main>
 
-  <!-- Left: upload -->
-  <div class="card">
-    <h2>Imagen de entrada</h2>
+  <!-- Left: upload + slider -->
+  <div>
+    <div class="card">
+      <div class="card-title">Tu foto</div>
 
-    <div id="drop-zone">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="1.5">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/>
-        <line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
-      <p>Arrastra una imagen aquí<br>o <span>haz clic para seleccionar</span></p>
+      <div id="drop-zone" role="button" tabindex="0"
+           aria-label="Zona para subir imagen">
+        <div class="dz-icon">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <rect x="3" y="3" width="18" height="18" rx="3"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
+          </svg>
+        </div>
+        <p class="dz-text">
+          Arrastra una foto aquí<br>
+          o <span class="dz-link">haz clic para seleccionar</span>
+        </p>
+        <p class="dz-text" style="font-size:.75rem;margin-top:6px;">
+          JPG · PNG · hasta 10 MB
+        </p>
+      </div>
+      <input type="file" id="file-input" accept="image/*"/>
+
+      <div id="preview-wrap">
+        <canvas id="preview-canvas"></canvas>
+        <img id="preview-img" alt=""/>
+      </div>
+
+      <button id="btn-predict">🔍 Analizar imagen</button>
+
+      <!-- Robustness slider (visible after first result) -->
+      <div id="noise-section">
+        <div class="noise-label-row">
+          <div class="noise-title">¿Y si la foto no es perfecta?</div>
+          <div class="noise-emoji" id="noise-emoji">📷</div>
+        </div>
+        <input type="range" id="noise-slider" min="0" max="100" value="0"
+               aria-label="Calidad de la foto"/>
+        <div class="noise-ticks">
+          <span>Foto ideal</span>
+          <span>Foto muy degradada</span>
+        </div>
+        <div id="noise-warning">
+          📉 Con fotos de menor calidad, la IA se vuelve menos confiable.
+          ¡Por eso seguimos investigando cómo hacerla más robusta!
+        </div>
+      </div>
     </div>
-    <input type="file" id="file-input" accept="image/*" />
-
-    <div id="preview-wrap">
-      <img id="preview-img" alt="Vista previa" />
-    </div>
-
-    <button id="btn-predict">Analizar imagen</button>
   </div>
 
   <!-- Right: results -->
   <div id="results-panel">
 
-    <!-- Placeholder -->
     <div id="placeholder">
-      <svg width="56" height="56" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="1.2">
-        <rect x="3" y="3" width="18" height="18" rx="2"/>
-        <path d="M9 9h6M9 12h6M9 15h4"/>
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+        <path d="M12 2a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
+        <path d="M12 14v8M8 18h8"/>
+        <circle cx="19" cy="19" r="4"/>
+        <path d="M21 17l-4 4"/>
       </svg>
-      <p>Sube una imagen de la espalda<br>para obtener el diagnóstico</p>
+      <p>Sube una foto de la espalda<br>y la IA te dará su análisis</p>
     </div>
 
-    <!-- Spinner -->
     <div id="spinner">
       <div class="spin"></div>
       <p>Analizando imagen…</p>
     </div>
 
-    <!-- Error -->
     <div id="error-msg"></div>
 
-    <!-- Consensus -->
+    <!-- Consensus gauge -->
     <div id="consensus-card">
-      <div id="consensus-icon"></div>
-      <div>
-        <div id="consensus-label">Diagnóstico por consenso</div>
-        <div id="consensus-value"></div>
-        <div id="consensus-note">Mayoría simple entre E1, E2 y E3</div>
+      <div class="consensus-inner">
+        <div class="gauge-wrap">
+          <svg id="gauge-svg" viewBox="0 0 120 68" width="140" height="84">
+            <!-- Background arc: half-circle r=46, center (60,60) -->
+            <path d="M14,60 A46,46 0 0,1 106,60"
+                  fill="none" id="gauge-bg" stroke-width="10" stroke-linecap="round"/>
+            <!-- Fill arc -->
+            <path d="M14,60 A46,46 0 0,1 106,60"
+                  fill="none" id="gauge-fill" stroke-width="10" stroke-linecap="round"
+                  stroke-dasharray="144.5" stroke-dashoffset="144.5"/>
+            <text x="60" y="56" text-anchor="middle" id="gauge-label-pct">0%</text>
+            <text x="60" y="66" text-anchor="middle" id="gauge-label-txt">de confianza</text>
+          </svg>
+        </div>
+        <div class="consensus-text">
+          <div id="consensus-verdict">—</div>
+          <div id="consensus-sublabel">Diagnóstico del sistema de IA</div>
+          <div id="consensus-note">
+            <span class="simple-only">Basado en tres análisis independientes de la misma foto</span>
+            <span class="tech-only">Mayoría simple entre E1 (CNN), E2 (XGBoost) y E3 (Híbrido)</span>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- Three model cards -->
+    <!-- Model cards -->
     <div id="model-cards">
       <div class="model-card" id="card-e1">
-        <div class="model-name">E1 · CNN</div>
-        <div class="badge" id="badge-e1">—</div>
-        <div class="prob-bar-wrap">
-          <div class="prob-label">P(Escoliosis)</div>
-          <div class="prob-bar"><div class="prob-fill" id="fill-e1" style="width:0%"></div></div>
-          <div class="prob-value" id="prob-e1">—</div>
+        <div class="mc-name simple-only">Análisis de imagen</div>
+        <div class="mc-name tech-only">E1 · CNN</div>
+        <div class="mc-badge" id="badge-e1">—</div>
+        <div class="mc-bar-wrap">
+          <div class="mc-bar-label simple-only">Nivel de confianza</div>
+          <div class="mc-bar-label tech-only">P(Escoliosis)</div>
+          <div class="mc-bar"><div class="mc-fill" id="fill-e1" style="width:0%"></div></div>
+          <div class="mc-value tech-only" id="prob-e1">—</div>
         </div>
       </div>
       <div class="model-card" id="card-e2">
-        <div class="model-name">E2 · XGBoost</div>
-        <div class="badge" id="badge-e2">—</div>
-        <div class="prob-bar-wrap">
-          <div class="prob-label">P(Escoliosis)</div>
-          <div class="prob-bar"><div class="prob-fill" id="fill-e2" style="width:0%"></div></div>
-          <div class="prob-value" id="prob-e2">—</div>
+        <div class="mc-name simple-only">Análisis de postura</div>
+        <div class="mc-name tech-only">E2 · XGBoost</div>
+        <div class="mc-badge" id="badge-e2">—</div>
+        <div class="mc-bar-wrap">
+          <div class="mc-bar-label simple-only">Nivel de confianza</div>
+          <div class="mc-bar-label tech-only">P(Escoliosis)</div>
+          <div class="mc-bar"><div class="mc-fill" id="fill-e2" style="width:0%"></div></div>
+          <div class="mc-value tech-only" id="prob-e2">—</div>
         </div>
       </div>
       <div class="model-card" id="card-e3">
-        <div class="model-name">E3 · Hybrid</div>
-        <div class="badge" id="badge-e3">—</div>
-        <div class="prob-bar-wrap">
-          <div class="prob-label">P(Escoliosis)</div>
-          <div class="prob-bar"><div class="prob-fill" id="fill-e3" style="width:0%"></div></div>
-          <div class="prob-value" id="prob-e3">—</div>
+        <div class="mc-name simple-only">Análisis combinado</div>
+        <div class="mc-name tech-only">E3 · Híbrido</div>
+        <div class="mc-badge" id="badge-e3">—</div>
+        <div class="mc-bar-wrap">
+          <div class="mc-bar-label simple-only">Nivel de confianza</div>
+          <div class="mc-bar-label tech-only">P(Escoliosis)</div>
+          <div class="mc-bar"><div class="mc-fill" id="fill-e3" style="width:0%"></div></div>
+          <div class="mc-value tech-only" id="prob-e3">—</div>
         </div>
       </div>
     </div>
 
     <!-- Grad-CAM -->
     <div class="card" id="gradcam-card">
-      <h2>Grad-CAM — E1 CNN (zonas de atención)</h2>
-      <img id="gradcam-img" alt="Grad-CAM overlay" />
+      <div class="card-title simple-only">¿Dónde miró la IA?</div>
+      <div class="card-title tech-only">Mapa de atención — Grad-CAM (E1 CNN)</div>
+      <img id="gradcam-img" alt="Mapa de atención de la IA"/>
+      <div class="gradcam-legend">
+        <div class="legend-item">
+          <div class="legend-dot" style="background:linear-gradient(90deg,#ff0000,#ffaa00)"></div>
+          <span>Alta atención</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:linear-gradient(90deg,#0000ff,#00aaff)"></div>
+          <span>Baja atención</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:#FFA500;border-radius:50%;"></div>
+          <span>Zona que revisan los especialistas</span>
+        </div>
+      </div>
       <p id="gradcam-note">
-        El mapa de calor muestra las regiones de la imagen que más influyeron
-        en la predicción del modelo E1. Rojo/naranja = máxima activación · Azul/cian = baja activación.
+        <span class="simple-only">El área roja muestra en qué parte de la espalda
+        se fijó más la IA para tomar su decisión. El contorno naranja corresponde
+        a la región que los especialistas evalúan durante el examen clínico.</span>
+        <span class="tech-only">Grad-CAM sobre la capa top_activation de EfficientNetB0.
+        El contorno naranja es el convex hull de los landmarks de hombros y caderas
+        detectados por MediaPipe (puntos 11, 12, 23, 24).</span>
       </p>
     </div>
 
   </div>
 </main>
 
-<script>
-  const dropZone   = document.getElementById('drop-zone');
-  const fileInput  = document.getElementById('file-input');
-  const previewWrap = document.getElementById('preview-wrap');
-  const previewImg = document.getElementById('preview-img');
-  const btnPredict = document.getElementById('btn-predict');
+<!-- ── Footer ─────────────────────────────────────────────────── -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-disclaimer">
+      <span class="disclaimer-icon">⚠️</span>
+      <span>
+        <strong>Este es un prototipo de investigación.</strong>
+        No es una herramienta de diagnóstico médico. Los resultados no reemplazan
+        la evaluación de un profesional de salud. Ante cualquier señal de alerta,
+        consulta a un médico o especialista en ortopedia.
+      </span>
+    </div>
+    <div class="footer-meta">
+      <span>🩺 Detección de Escoliosis con IA · Proyecto de Tesis de Pregrado</span>
+      <span>Universidad ESAN · Santiago Escalante Carrión · 2026</span>
+    </div>
+  </div>
+</footer>
 
-  // ── Upload interaction ────────────────────────────────────
+<script>
+  // ── Estado global ─────────────────────────────────────────────
+  let currentFile     = null;   // File object original
+  let cleanDataURL    = null;   // DataURL sin ruido (para canvas)
+  let noiseDebounce   = null;
+  const ARC_LEN       = 144.5; // π × 46 ≈ 144.51 (longitud del arco del gauge)
+
+  // ── Elementos ─────────────────────────────────────────────────
+  const dropZone      = document.getElementById('drop-zone');
+  const fileInput     = document.getElementById('file-input');
+  const previewWrap   = document.getElementById('preview-wrap');
+  const previewCanvas = document.getElementById('preview-canvas');
+  const previewImg    = document.getElementById('preview-img');
+  const btnPredict    = document.getElementById('btn-predict');
+  const noiseSection  = document.getElementById('noise-section');
+  const noiseSlider   = document.getElementById('noise-slider');
+  const noiseWarning  = document.getElementById('noise-warning');
+  const noiseEmoji    = document.getElementById('noise-emoji');
+
+  // ── Modo simple / técnico ─────────────────────────────────────
+  document.getElementById('tech-toggle').addEventListener('change', function() {
+    document.body.classList.toggle('tech-mode', this.checked);
+  });
+
+  // ── Upload interaction ────────────────────────────────────────
   dropZone.addEventListener('click', () => fileInput.click());
-  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' ') fileInput.click(); });
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
@@ -380,12 +793,19 @@
     const f = e.dataTransfer.files[0];
     if (f) loadFile(f);
   });
-  fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) loadFile(fileInput.files[0]);
+  });
 
   function loadFile(file) {
+    currentFile = file;
+    noiseSlider.value = '0';
+
     const reader = new FileReader();
     reader.onload = e => {
-      previewImg.src = e.target.result;
+      cleanDataURL = e.target.result;
+      previewImg.onload = () => renderCanvas(0);
+      previewImg.src = cleanDataURL;
       previewWrap.style.display = 'block';
       btnPredict.style.display  = 'block';
     };
@@ -393,42 +813,105 @@
     resetResults();
   }
 
-  // ── Predict ───────────────────────────────────────────────
-  btnPredict.addEventListener('click', async () => {
-    const file = fileInput.files[0];
-    if (!file) return;
+  // Dibuja el canvas con ruido gaussiano (client-side, para feedback inmediato)
+  function renderCanvas(sigma) {
+    const img = previewImg;
+    previewCanvas.width  = img.naturalWidth  || 400;
+    previewCanvas.height = img.naturalHeight || 300;
+    const ctx = previewCanvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    if (sigma > 0) {
+      const id   = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+      const data = id.data;
+      const std  = sigma * 255;
+      for (let i = 0; i < data.length; i += 4) {
+        const n = gaussianRnd(std);
+        data[i]   = clamp(data[i]   + n);
+        data[i+1] = clamp(data[i+1] + n);
+        data[i+2] = clamp(data[i+2] + n);
+      }
+      ctx.putImageData(id, 0, 0);
+    }
+  }
 
+  function gaussianRnd(std) {
+    const u = 1 - Math.random(), v = Math.random();
+    return std * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  function clamp(v) { return Math.max(0, Math.min(255, Math.round(v))); }
+
+  // ── Noise slider ──────────────────────────────────────────────
+  noiseSlider.addEventListener('input', () => {
+    const sliderVal = parseInt(noiseSlider.value);
+    const sigma     = sliderVal / 200;   // 0-100 → 0-0.50
+
+    // Feedback visual inmediato: actualizar preview canvas
+    if (cleanDataURL) renderCanvas(sigma);
+
+    // Emojis y advertencia
+    if (sliderVal === 0)       noiseEmoji.textContent = '📷';
+    else if (sliderVal <= 30)  noiseEmoji.textContent = '🌫️';
+    else if (sliderVal <= 60)  noiseEmoji.textContent = '📵';
+    else                       noiseEmoji.textContent = '❌';
+
+    noiseWarning.style.display = sliderVal >= 60 ? 'block' : 'none';
+
+    // Llamada al servidor con debounce 400ms
+    clearTimeout(noiseDebounce);
+    if (sliderVal === 0 && currentFile) {
+      noiseDebounce = setTimeout(() => runPredict(currentFile, 0), 400);
+    } else if (currentFile) {
+      noiseDebounce = setTimeout(() => runPredict(currentFile, sigma), 400);
+    }
+  });
+
+  // ── Predict ───────────────────────────────────────────────────
+  btnPredict.addEventListener('click', () => {
+    if (!currentFile) return;
+    runPredict(currentFile, 0);
+    noiseSlider.value = '0';
+    renderCanvas(0);
+    noiseWarning.style.display = 'none';
+    noiseEmoji.textContent = '📷';
+  });
+
+  async function runPredict(file, sigma) {
     setLoading(true);
-
     const form = new FormData();
     form.append('file', file);
-
+    form.append('noise_sigma', sigma.toFixed(4));
     try {
       const res  = await fetch('/predict', { method: 'POST', body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Error en el servidor');
       renderResults(data);
+      noiseSection.style.display = 'block';
     } catch (err) {
       showError(err.message);
     } finally {
       setLoading(false);
     }
-  });
+  }
 
-  // ── Render ────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────
   function renderResults(data) {
-    hide('placeholder');
-    hide('error-msg');
+    hide('placeholder'); hide('error-msg');
 
-    // Consensus
-    const consensus = data.consensus;
-    const cc = document.getElementById('consensus-card');
-    cc.className = consensus === 'Scoliosis' ? 'scoliosis' : 'healthy';
-    cc.style.display = 'flex';
-    document.getElementById('consensus-icon').textContent =
-      consensus === 'Scoliosis' ? '⚠️' : '✅';
-    document.getElementById('consensus-value').textContent =
-      consensus === 'Scoliosis' ? 'Escoliosis detectada' : 'Sin escoliosis';
+    // Gauge
+    const isScoliosis = data.consensus === 'Scoliosis';
+    const card = document.getElementById('consensus-card');
+    card.className = isScoliosis ? 'scoliosis' : 'healthy';
+    card.style.display = 'block';
+
+    // Pick the most informative probability for the gauge
+    const probs = [data.e1, data.e2, data.e3]
+      .filter(m => m && m.probability !== null)
+      .map(m => m.probability);
+    const displayProb = probs.length ? probs.reduce((a,b)=>a+b)/probs.length : 0.5;
+
+    setGauge(displayProb, isScoliosis);
+    document.getElementById('consensus-verdict').textContent =
+      isScoliosis ? 'Posible escoliosis' : 'Sin señales de escoliosis';
 
     // Model cards
     document.getElementById('model-cards').style.display = 'grid';
@@ -438,9 +921,20 @@
 
     // Grad-CAM
     if (data.e1 && data.e1.gradcam_b64) {
-      document.getElementById('gradcam-img').src = 'data:image/png;base64,' + data.e1.gradcam_b64;
+      document.getElementById('gradcam-img').src =
+        'data:image/png;base64,' + data.e1.gradcam_b64;
       document.getElementById('gradcam-card').style.display = 'block';
     }
+  }
+
+  function setGauge(prob, isScoliosis) {
+    // ARC_LEN = π * 46 ≈ 144.5 (half circle)
+    const offset = ARC_LEN * (1 - prob);
+    const fill   = document.getElementById('gauge-fill');
+    fill.style.strokeDashoffset = offset;
+    fill.style.stroke = isScoliosis ? '#E53E3E' : '#0F6E67';
+    document.getElementById('gauge-label-pct').textContent =
+      Math.round(prob * 100) + '%';
   }
 
   function renderCard(id, d) {
@@ -451,48 +945,49 @@
     const prob  = document.getElementById('prob-' + id);
 
     const isNA = d.prediction === 'N/A' || d.probability === null;
-
     if (isNA) {
-      card.className  = 'model-card na';
-      badge.textContent = 'Sin pose';
-      fill.style.width  = '0%';
-      prob.textContent  = 'N/A';
+      card.className      = 'model-card na';
+      badge.textContent   = 'No detectado';
+      fill.style.width    = '0%';
+      if (prob) prob.textContent = 'N/D';
       return;
     }
 
     const isScoliosis = d.prediction === 'Scoliosis';
-    card.className  = 'model-card ' + (isScoliosis ? 'scoliosis' : 'healthy');
-    badge.textContent = isScoliosis ? 'Escoliosis' : 'Sano';
-    fill.style.width  = (d.probability * 100).toFixed(1) + '%';
-    prob.textContent  = (d.probability * 100).toFixed(1) + '%';
+    card.className      = 'model-card ' + (isScoliosis ? 'scoliosis' : 'healthy');
+    badge.textContent   = isScoliosis ? 'Escoliosis' : 'Sano';
+    fill.style.width    = (d.probability * 100).toFixed(1) + '%';
+    if (prob) prob.textContent = (d.probability * 100).toFixed(1) + '%';
   }
 
-  // ── Helpers ───────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────
   function setLoading(on) {
     btnPredict.disabled = on;
-    btnPredict.textContent = on ? 'Analizando…' : 'Analizar imagen';
+    btnPredict.textContent = on ? '⏳ Analizando…' : '🔍 Analizar imagen';
     document.getElementById('spinner').style.display = on ? 'block' : 'none';
     if (on) {
       hide('placeholder');
       hide('consensus-card');
-      hide('model-cards');
+      document.getElementById('model-cards').style.display = 'none';
       hide('gradcam-card');
+      hide('error-msg');
     }
   }
 
   function showError(msg) {
     const el = document.getElementById('error-msg');
-    el.textContent = '❌ ' + msg;
+    el.innerHTML = '❌ <strong>Error:</strong> ' + msg;
     el.style.display = 'block';
     show('placeholder');
   }
 
   function resetResults() {
     hide('consensus-card');
-    hide('model-cards');
+    document.getElementById('model-cards').style.display = 'none';
     hide('gradcam-card');
     hide('error-msg');
     show('placeholder');
+    noiseSection.style.display = 'none';
   }
 
   function hide(id) {
@@ -504,6 +999,5 @@
     if (el) el.style.display = '';
   }
 </script>
-
 </body>
 </html>
